@@ -129,12 +129,17 @@ endif()
 add_executable(dh-discover src/tools/discover.cpp)
 target_link_libraries(dh-discover PRIVATE dynamichardware)
 target_include_directories(dh-discover PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-# Propagate compile definitions from the library to the tool
+# Propagate compile definitions + include dirs from the library to the tool
+# (needed because dh-discover includes backend headers that #include ecrt.h/gpiod.h)
 if(ETHERCAT_AVAILABLE)
     target_compile_definitions(dh-discover PRIVATE ETHERCAT_AVAILABLE)
+    target_include_directories(dh-discover PRIVATE ${ETHERCAT_INCLUDE_DIR})
 endif()
 if(LIBGPIOD_FOUND)
     target_compile_definitions(dh-discover PRIVATE GPIO_LIBGPIOD_AVAILABLE)
+    if(LIBGPIOD_INCLUDE_DIR)
+        target_include_directories(dh-discover PRIVATE ${LIBGPIOD_INCLUDE_DIR})
+    endif()
 endif()
 set_target_properties(dh-discover PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
