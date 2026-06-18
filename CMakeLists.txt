@@ -113,6 +113,29 @@ else()
     message(STATUS "libgpiod not found — GPIO adapter will use stub mode")
 endif()
 
+# ── dh-discover CLI tool ─────────────────────────────────────────────────────
+
+add_executable(dh-discover src/tools/discover.cpp)
+target_link_libraries(dh-discover PRIVATE dynamichardware)
+target_include_directories(dh-discover PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+# Propagate compile definitions from the library to the tool
+if(ETHERCAT_AVAILABLE)
+    target_compile_definitions(dh-discover PRIVATE ETHERCAT_AVAILABLE)
+endif()
+if(LIBGPIOD_FOUND)
+    target_compile_definitions(dh-discover PRIVATE GPIO_LIBGPIOD_AVAILABLE)
+endif()
+if(nlohmann_json_FOUND)
+    target_compile_definitions(dh-discover PRIVATE NLOHMANN_JSON_AVAILABLE)
+endif()
+set_target_properties(dh-discover PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+)
+
+install(TARGETS dh-discover
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
 # ── Packaging for install / find_package ─────────────────────────────────────
 
 # Export targets
