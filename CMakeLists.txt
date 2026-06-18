@@ -50,12 +50,18 @@ target_compile_options(dynamichardware PRIVATE -Wall -Wextra -Wpedantic)
 target_compile_definitions(dynamichardware PUBLIC NLOHMANN_JSON_AVAILABLE)
 
 # IgH EtherCAT (optional — stub mode when absent)
+# Cross-compile: accept ETHERCAT_LIB + ETHERCAT_INCLUDE_DIR from parent CMake.
+# Native: auto-detect from system paths.
 if(CMAKE_CROSSCOMPILING)
     if(ETHERCAT_LIB)
-        find_path(ETHERCAT_INCLUDE_DIR NAMES ecrt.h
-            PATHS "${CMAKE_SOURCE_DIR}/thirdparty/ethercat/include"
-            NO_DEFAULT_PATH
-        )
+        # Accept parent-provided include dir, otherwise search parent thirdparty/
+        if(NOT ETHERCAT_INCLUDE_DIR)
+            find_path(ETHERCAT_INCLUDE_DIR NAMES ecrt.h
+                PATHS "${CMAKE_SOURCE_DIR}/thirdparty/ethercat/include"
+                      "${CMAKE_CURRENT_SOURCE_DIR}/../ethercat/include"
+                NO_DEFAULT_PATH
+            )
+        endif()
         if(ETHERCAT_INCLUDE_DIR)
             set(ETHERCAT_AVAILABLE ON)
         endif()
@@ -84,8 +90,19 @@ else()
 endif()
 
 # libgpiod (optional — GPIO adapter)
+# Cross-compile: accept LIBGPIOD_LIB + LIBGPIOD_INCLUDE_DIR from parent CMake.
+# Native: auto-detect from system paths.
 if(CMAKE_CROSSCOMPILING)
     if(LIBGPIOD_LIB AND EXISTS "${LIBGPIOD_LIB}")
+        # Accept parent-provided include dir (e.g., from deploy.sh staging area).
+        # If not provided, search common cross-compile sysroot locations.
+        if(NOT LIBGPIOD_INCLUDE_DIR)
+            find_path(LIBGPIOD_INCLUDE_DIR NAMES gpiod.h
+                PATHS "${CMAKE_SOURCE_DIR}/deploy/include"
+                      "${CMAKE_CURRENT_SOURCE_DIR}/../include"
+                NO_DEFAULT_PATH
+            )
+        endif()
         set(LIBGPIOD_FOUND TRUE)
     endif()
 else()
