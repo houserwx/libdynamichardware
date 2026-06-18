@@ -17,20 +17,19 @@ set(LD_SOURCES
     # PDO core
     src/backends/pdo/PDO.cpp
     src/backends/pdo/HardwareRegistry.cpp
-    src/backends/pdo/MachineStatePDO.cpp
-    # RT utilities
-    src/rt/Config.cpp
-    # Backends
+    # EtherCAT adapter
     src/backends/ethercat/EthercatAdapter.cpp
     src/backends/ethercat/HardwareCatalog.cpp
     src/backends/ethercat/kSlaveTypes.cpp
+    # GPIO adapter
     src/backends/gpio/BoardVariant.cpp
     src/backends/gpio/GPIOAdapter.cpp
-    src/backends/grpc/GrpcAdapter.cpp
+    # I2C adapter
     src/backends/i2c/I2CAdapter.cpp
-    src/backends/motor/MotorController.cpp
-    src/backends/simulated/SimulatedAdapter.cpp
+    # SPI adapter
     src/backends/spi/SPIAdapter.cpp
+    # Simulated adapter
+    src/backends/simulated/SimulatedAdapter.cpp
 )
 
 add_library(dynamichardware STATIC ${LD_SOURCES})

@@ -15,8 +15,6 @@
 #include "backends/i2c/I2CAdapter.h"
 #include "backends/spi/SPIAdapter.h"
 #include "backends/simulated/SimulatedAdapter.h"
-#include "backends/grpc/GrpcAdapter.h"
-#include "dynamichardware/config/Config.h"
 #include "dynamichardware/rt/SignalProcess.h"
 
 #include <cstdio>
@@ -279,41 +277,41 @@ static bool inspectCatalog(const std::string& path)
 
 static void runSimulatedDiscovery(const std::optional<std::string>& catalogPath)
 {
-    // Build a minimal config for simulation
-    common::config::Config cfg;
-    cfg.cycleTimeUs = 1000;
-
-    // Add some example simulated entries
-    common::config::PdoEntryDef encDef;
-    encDef.name = "SimEncoder-A";
-    encDef.hwUuid = "virt-enc-a-0001";
-    encDef.channelType = "Encoder";
-    cfg.pdoEntries.push_back(encDef);
-
-    common::config::PdoEntryDef diDef;
-    diDef.name = "SimDigitalInput-1";
-    diDef.hwUuid = "virt-di-0001";
-    diDef.channelType = "DigitalInput";
-    cfg.pdoEntries.push_back(diDef);
-
-    common::config::PdoEntryDef doDef;
-    doDef.name = "SimDigitalOutput-1";
-    doDef.hwUuid = "virt-do-0001";
-    doDef.channelType = "DigitalOutput";
-    doDef.pulseMs = 100;
-    cfg.pdoEntries.push_back(doDef);
-
     printHeader("Simulated Backend Discovery");
 
-    auto adapter = std::make_unique<fc::simulated::SimulatedAdapter>(cfg);
+    fc::pdo::HardwareCatalog catalog;
+    auto adapter = std::make_unique<fc::simulated::SimulatedAdapter>();
+    adapter->setCatalog(&catalog);
+    adapter->setCycleTimeUs(1000);
+
+    // Register example simulated channels directly into catalog
+    fc::pdo::CatalogEntry enc;
+    enc.key = "SIM|SimEncoder-A"; enc.uuid = "virt-enc-a-0001";
+    enc.channelType = "Encoder"; enc.name = "SimEncoder-A";
+    enc.slaveName = "Simulated"; enc.isSimulated = true;
+    enc.sim.rpm = 3000.0f; enc.sim.rollerDiamMm = 50.0f;
+    enc.sim.resolutionPpr = 1024;
+    catalog.addEntry(std::move(enc));
+
+    fc::pdo::CatalogEntry di;
+    di.key = "SIM|SimDigitalInput-1"; di.uuid = "virt-di-0001";
+    di.channelType = "DigitalInput"; di.name = "SimDigitalInput-1";
+    di.slaveName = "Simulated"; di.isSimulated = true;
+    di.sim.partsPerMin = 120.0f;
+    catalog.addEntry(std::move(di));
+
+    fc::pdo::CatalogEntry do_ch;
+    do_ch.key = "SIM|SimDigitalOutput-1"; do_ch.uuid = "virt-do-0001";
+    do_ch.channelType = "DigitalOutput"; do_ch.name = "SimDigitalOutput-1";
+    do_ch.slaveName = "Simulated"; do_ch.isSimulated = true;
+    do_ch.isOutput = true; do_ch.sim.pulseMs = 100;
+    catalog.addEntry(std::move(do_ch));
 
     if (!adapter->initialize()) {
         std::fprintf(stderr, "Simulated adapter initialization failed\n");
         return;
     }
 
-    // The simulated adapter doesn't register to the catalog via setCatalog
-    // (it builds entries directly). We enumerate from PDOs instead.
     auto& pdos = adapter->getPDOs();
     std::printf("PDOs:      %zu\n", pdos.size());
 
@@ -325,9 +323,16 @@ static void runSimulatedDiscovery(const std::optional<std::string>& catalogPath)
 
     for (const auto& pdo : pdos) {
         for (const auto& entry : pdo.entries) {
-            std::printf("  %-20s  UUID: %s  Type: %u  Offset: %u\n",
-                        entry.uuid.c_str(), entry.uuid.c_str(),
+            std::printf("  %-20s  Type: %u  Offset: %u\n",
+                        entry.uuid.c_str(),
                         static_cast<unsigned>(entry.type), entry.byteOffset);
+        }
+    }
+
+    // Save catalog if requested
+    if (catalogPath.has_value()) {
+        if (catalog.save(catalogPath.value())) {
+            std::printf("[discover] Simulated catalog saved to %s\n\n", catalogPath.value().c_str());
         }
     }
     std::printf("\n");

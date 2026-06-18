@@ -39,6 +39,25 @@ namespace fc::pdo {
 // CatalogEntry — one PDO channel identified solely by its stable UUID.
 // ---------------------------------------------------------------------------
 struct CatalogEntry {
+    // Simulation parameters — populated for simulated (virt-*) entries.
+    // SimulatedAdapter reads these to generate synthetic I/O values.
+    struct SimParams {
+        float    rpm           {0.0f};
+        float    rollerDiamMm  {0.0f};
+        uint32_t resolutionPpr {0};
+        bool     quadrature    {false};
+        float    partsPerMin   {0.0f};
+        float    partWidthMm   {0.0f};
+        float    variancePercent{0.0f};
+        uint32_t pulseMs       {0};
+        uint32_t debounceMs    {0};
+
+        NLOHMANN_DEFINE_TYPE_INTRUSIVE(SimParams,
+            rpm, rollerDiamMm, resolutionPpr, quadrature,
+            partsPerMin, partWidthMm, variancePercent,
+            pulseMs, debounceMs)
+    };
+
     std::string key;           ///< Stable identity key (lookup / persistence)
     std::string uuid;          ///< RFC-4122 v4 UUID, generated once + persisted
     std::string channelType;   ///< "DigitalInput" | "IMU_GyroX" | etc.
@@ -50,11 +69,13 @@ struct CatalogEntry {
     uint16_t    pdoIndex{0};
     uint8_t     pdoSubindex{0};
     bool        isOutput{false};
+    bool        isSimulated{false};  ///< true for virt-* keys
+    SimParams   sim{};              ///< Simulation parameters (if isSimulated)
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(CatalogEntry,
         key, uuid, channelType, name, slaveName,
         slavePos, productCode, revisionNumber,
-        pdoIndex, pdoSubindex, isOutput)
+        pdoIndex, pdoSubindex, isOutput, isSimulated, sim)
 };
 
 // ---------------------------------------------------------------------------
