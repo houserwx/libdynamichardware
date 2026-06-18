@@ -39,21 +39,16 @@ add_library(DynamicHardware::dynamichardware ALIAS dynamichardware)
 target_include_directories(dynamichardware
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/thirdparty>
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 
 target_compile_options(dynamichardware PRIVATE -Wall -Wextra -Wpedantic)
 
-# ── Optional dependencies ───────────────────────────────────────────────────
+# ── Dependencies ─────────────────────────────────────────────────────────────
 
-# nlohmann_json (required for Config::loadFromJson and HardwareCatalog)
-find_package(nlohmann_json QUIET)
-if(nlohmann_json_FOUND)
-    target_link_libraries(dynamichardware PUBLIC nlohmann_json::nlohmann_json)
-    target_compile_definitions(dynamichardware PUBLIC NLOHMANN_JSON_AVAILABLE)
-else()
-    message(WARNING "nlohmann_json not found — JSON config/catalog loading will not work")
-endif()
+# nlohmann_json (vendored header-only — always available, included via thirdparty/ above)
+target_compile_definitions(dynamichardware PUBLIC NLOHMANN_JSON_AVAILABLE)
 
 # IgH EtherCAT (optional — stub mode when absent)
 if(CMAKE_CROSSCOMPILING)
@@ -125,9 +120,6 @@ endif()
 if(LIBGPIOD_FOUND)
     target_compile_definitions(dh-discover PRIVATE GPIO_LIBGPIOD_AVAILABLE)
 endif()
-if(nlohmann_json_FOUND)
-    target_compile_definitions(dh-discover PRIVATE NLOHMANN_JSON_AVAILABLE)
-endif()
 set_target_properties(dh-discover PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
 )
@@ -145,8 +137,11 @@ install(TARGETS dynamichardware
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
 )
 
-# Install headers
+# Install headers + vendored thirdparty
 install(DIRECTORY include/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
+install(DIRECTORY thirdparty/
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
 
