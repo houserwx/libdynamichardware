@@ -499,7 +499,7 @@ int main(int argc, char** argv)
 #ifdef GPIO_LIBGPIOD_AVAILABLE
         "yes",
 #else
-        "no (stub)"
+        "no (stub)",
 #endif
     );
     printSeparator();
