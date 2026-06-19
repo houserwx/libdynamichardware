@@ -168,7 +168,7 @@ void GPIOAdapter::discoverLines()
 
         // Create PDO entry for this line
         dynamichardware::pdo::PDOEntry entry;
-        entry.type = dynamichardware::pdo::EntryType::DigitalInput;
+        entry.type = dynamichardware::pdo::EntryType::BoolInput;
         entry.uuid = "GPIO|" + std::to_string(i);
         line.entry = &entry;
 

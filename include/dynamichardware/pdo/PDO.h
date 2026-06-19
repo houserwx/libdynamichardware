@@ -29,34 +29,68 @@
 namespace dynamichardware::pdo {
 
 // ------------------------------------------------------------
-// EntryType — replaces virtual dispatch for typed accessor logic.
+// EntryFlag — bitmask fields for composing EntryType.
+//
+// EntryType is a composable bitmask: direction | signedness | base | size
+// Any combination is valid, so we don't need a new enum value per combo.
+//
+//   Bit  [1-0]   Direction:    INPUT=0x01, OUTPUT=0x02
+//   Bit  [2]     Signedness:   SIGNED=0x04 (for INT base; ignored for BOOL/FLOAT)
+//   Bits [4-3]   Base type:    BOOL=0x00, INT=0x08, FLOAT=0x10, MSG=0x18
+//   Bits [6-5]   Bit size:     SZ_1=0x00, SZ_8=0x20, SZ_16=0x40, SZ_32=0x60
+//   Bit  [7]     Reserved
+//
+// Domain semantics (IMU_GyroX, Encoder_A, etc.) live in the catalog
+// channelType string and in application-layer composites.
 // ------------------------------------------------------------
-enum class EntryType : uint8_t {
-    DigitalInput  = 0,
-    DigitalOutput = 1,
-    Encoder       = 2,
-    AnalogInput   = 3,
-    AnalogOutput  = 4,
-    MessageOut    = 5,
-    MessageIn     = 6,
-    // IMU sensor types (I2C/SPI backends)
-    IMU_GyroX     = 7,
-    IMU_GyroY     = 8,
-    IMU_GyroZ     = 9,
-    IMU_AccelX    = 10,
-    IMU_AccelY    = 11,
-    IMU_AccelZ    = 12,
-    MagnetometerX = 13,
-    MagnetometerY = 14,
-    MagnetometerZ = 15,
-    Barometer     = 16,
-    // GPS sensor types (UART NMEA, SPI, or I2C backends)
-    GPS_Latitude  = 17,
-    GPS_Longitude = 18,
-    GPS_Altitude  = 19,
-    GPS_Heading   = 20,
-    GPS_FixQuality = 21,
+// Direction (bits 0-1)
+constexpr uint8_t DIR_INPUT   = 0x01;
+constexpr uint8_t DIR_OUTPUT  = 0x02;
+// Signedness (bit 2)
+constexpr uint8_t SIGNED      = 0x04;
+// Base type (bits 3-4)
+constexpr uint8_t BASE_BOOL   = 0x00;
+constexpr uint8_t BASE_INT    = 0x08;
+constexpr uint8_t BASE_FLOAT  = 0x10;
+constexpr uint8_t BASE_MSG    = 0x18;
+// Bit size (bits 5-6)
+constexpr uint8_t SZ_1        = 0x00;
+constexpr uint8_t SZ_8        = 0x20;
+constexpr uint8_t SZ_16       = 0x40;
+constexpr uint8_t SZ_32       = 0x60;
+
+// Pre-composed convenience constants (the values users actually reference)
+enum EntryType : uint8_t {
+    // Bool I/O
+    BoolInput    = DIR_INPUT  | BASE_BOOL  | SZ_1,   // 0x01
+    BoolOutput   = DIR_OUTPUT | BASE_BOOL  | SZ_1,   // 0x02
+
+    // Integer inputs (signed is the common hardware default)
+    Int8Input    = DIR_INPUT  | SIGNED | BASE_INT | SZ_8,
+    Int16Input   = DIR_INPUT  | SIGNED | BASE_INT | SZ_16,
+    Int32Input   = DIR_INPUT  | SIGNED | BASE_INT | SZ_32,
+
+    // Integer outputs
+    Int8Output   = DIR_OUTPUT | SIGNED | BASE_INT | SZ_8,
+    Int16Output  = DIR_OUTPUT | SIGNED | BASE_INT | SZ_16,
+    Int32Output  = DIR_OUTPUT | SIGNED | BASE_INT | SZ_32,
+
+    // Float I/O (always signed, 32-bit)
+    FloatInput   = DIR_INPUT  | BASE_FLOAT | SZ_32,   // 0x71
+    FloatOutput  = DIR_OUTPUT | BASE_FLOAT | SZ_32,   // 0x72
+
+    // Message channels (no value format in process image)
+    MessageIn    = DIR_INPUT  | BASE_MSG,   // 0x19
+    MessageOut   = DIR_OUTPUT | BASE_MSG,   // 0x1A
 };
+
+// Bitmask extractors — constexpr, inlineable, zero-cost
+constexpr bool    entryIsInput(uint8_t t)     noexcept { return t & DIR_INPUT;  }
+constexpr bool    entryIsOutput(uint8_t t)    noexcept { return t & DIR_OUTPUT; }
+constexpr bool    entryIsMessage(uint8_t t)   noexcept { return (t & 0x18) == BASE_MSG; }
+constexpr uint8_t entryValueFormat(uint8_t t) noexcept { return t & 0xF0; }
+constexpr uint8_t entryBitSize(uint8_t t)     noexcept { return t & 0x60; }
+constexpr bool    entryIsSigned(uint8_t t)    noexcept { return t & SIGNED; }
 
 // ------------------------------------------------------------
 // PDOEntry — concrete, no vtable, value-type (moveable).
@@ -67,7 +101,7 @@ struct PDOEntry {
     uint8_t  bitOffset{0};
     uint8_t  bitLength{0};
     std::string uuid;
-    EntryType type{EntryType::DigitalInput};
+    EntryType type{EntryType::BoolInput};
 
     dynamichardware::rt::DebounceMachine debounce;
     dynamichardware::rt::PulseMachine    pulse;
@@ -119,63 +153,27 @@ struct PDOEntry {
     void read()  noexcept;
     void write() noexcept;
 
-    // Application accessors
-    [[nodiscard]] bool    getBool()            const noexcept;
-    void                  setBool(bool v)            noexcept;
-    [[nodiscard]] int64_t getCount()           const noexcept { return countVal_; }
-    [[nodiscard]] int16_t getRawAdc()          const noexcept { return adcVal_;   }
-    void                  setRawAdc(int16_t v)       noexcept { adcDesired_ = v;  }
+    // ---- Application accessors (typed by value format) ----
+    // The catalog's channelType string provides domain semantics.
 
-    // IMU sensor accessors (I2C/SPI backends)
-    [[nodiscard]] float getGyroX()  const noexcept { return gyroXVal_; }
-    [[nodiscard]] float getGyroY()  const noexcept { return gyroYVal_; }
-    [[nodiscard]] float getGyroZ()  const noexcept { return gyroZVal_; }
-    [[nodiscard]] float getAccelX() const noexcept { return accelXVal_; }
-    [[nodiscard]] float getAccelY() const noexcept { return accelYVal_; }
-    [[nodiscard]] float getAccelZ() const noexcept { return accelZVal_; }
-    [[nodiscard]] float getMagX()   const noexcept { return magXVal_; }
-    [[nodiscard]] float getMagY()   const noexcept { return magYVal_; }
-    [[nodiscard]] float getMagZ()   const noexcept { return magZVal_; }
-    [[nodiscard]] float getBaroPressure() const noexcept { return baroPressureVal_; }
-    [[nodiscard]] float getBaroAltitude() const noexcept { return baroAltitudeVal_; }
-
-    // Generic float accessor (used by GPS and any future float-type entries)
-    [[nodiscard]] float getFloat() const noexcept { return floatVal_; }
-    void setFloat(float v) noexcept { floatVal_ = v; }
-
-    void setGyroX(float v) noexcept { gyroXVal_ = v; }
-    void setGyroY(float v) noexcept { gyroYVal_ = v; }
-    void setGyroZ(float v) noexcept { gyroZVal_ = v; }
-    void setAccelX(float v) noexcept { accelXVal_ = v; }
-    void setAccelY(float v) noexcept { accelYVal_ = v; }
-    void setAccelZ(float v) noexcept { accelZVal_ = v; }
-    void setMagX(float v) noexcept { magXVal_ = v; }
-    void setMagY(float v) noexcept { magYVal_ = v; }
-    void setMagZ(float v) noexcept { magZVal_ = v; }
-    void setBaroPressure(float v) noexcept { baroPressureVal_ = v; }
-    void setBaroAltitude(float v) noexcept { baroAltitudeVal_ = v; }
+    [[nodiscard]] bool    getBool()    const noexcept;  // BoolInput / BoolOutput
+    void                  setBool(bool v)       noexcept;  // BoolOutput
+    [[nodiscard]] int32_t getInt32()   const noexcept { return int32Val_; }  // Int32Input
+    [[nodiscard]] int16_t getInt16()   const noexcept { return int16Val_; }  // Int16Input
+    void                  setInt16(int16_t v)    noexcept { int16Desired_ = v; }  // Int16Output
+    [[nodiscard]] float   getFloat()   const noexcept { return floatVal_; }  // FloatInput
+    void                  setFloat(float v)       noexcept { floatVal_ = v; }  // FloatOutput
 
 private:
+    // Read-side cache — updated by read()
     bool    boolVal_{false};
-    int64_t countVal_{0};
-    int16_t adcVal_{0};
-    int16_t adcDesired_{0};
+    int32_t int32Val_{0};
+    int16_t int16Val_{0};
+    float   floatVal_{0.0f};
 
-    // IMU sensor cached values (written by I2C/SPI adapters during readAll())
-    float gyroXVal_{0.0f};
-    float gyroYVal_{0.0f};
-    float gyroZVal_{0.0f};
-    float accelXVal_{0.0f};
-    float accelYVal_{0.0f};
-    float accelZVal_{0.0f};
-    float magXVal_{0.0f};
-    float magYVal_{0.0f};
-    float magZVal_{0.0f};
-    float baroPressureVal_{0.0f};
-    float baroAltitudeVal_{0.0f};
-
-    // Generic float value (used by GPS and any future float-type entries)
-    float floatVal_{0.0f};
+    // Write-side desired state
+    int16_t int16Desired_{0};
+    float   floatDesired_{0.0f};
 };
 
 // ------------------------------------------------------------

@@ -66,7 +66,7 @@ private:
     double                    cycleNsD_{500'000.0};
 
     struct SimState {
-        dynamichardware::pdo::EntryType type{dynamichardware::pdo::EntryType::DigitalInput};
+        dynamichardware::pdo::EntryType type{dynamichardware::pdo::EntryType::BoolInput};
         uint32_t  byteOffset{0};
 
         // Encoder

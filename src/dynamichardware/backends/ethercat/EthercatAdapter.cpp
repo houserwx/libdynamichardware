@@ -274,10 +274,10 @@ void EthercatAdapter::buildEntries()
 
     for (const auto& r : regs_) {
         dynamichardware::pdo::EntryType type;
-        if      (r.bitLength == 1U  && !r.isOutput) { type = dynamichardware::pdo::EntryType::DigitalInput;  }
-        else if (r.bitLength == 1U  &&  r.isOutput) { type = dynamichardware::pdo::EntryType::DigitalOutput; }
-        else if (r.bitLength == 32U && !r.isOutput) { type = dynamichardware::pdo::EntryType::Encoder;       }
-        else if (r.bitLength == 16U && !r.isOutput) { type = dynamichardware::pdo::EntryType::AnalogInput;   }
+        if      (r.bitLength == 1U  && !r.isOutput) { type = dynamichardware::pdo::EntryType::BoolInput;     }
+        else if (r.bitLength == 1U  &&  r.isOutput) { type = dynamichardware::pdo::EntryType::BoolOutput;    }
+        else if (r.bitLength == 32U && !r.isOutput) { type = dynamichardware::pdo::EntryType::Int32Input;    }
+        else if (r.bitLength == 16U && !r.isOutput) { type = dynamichardware::pdo::EntryType::Int16Input;    }
         else {
             // Unsupported width — registered in domain for offset resolution,
             // but not yet wrapped as a typed entry.

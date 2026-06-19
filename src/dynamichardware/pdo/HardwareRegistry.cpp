@@ -59,12 +59,10 @@ void HardwareRegistry::readAll() noexcept
 
         // Phase 2: concrete read sweep — latch value from image into entry cache
         // No virtual calls — PDOEntry::read() is a concrete struct method.
-        // Only read INPUT entries; outputs are written by writeAll().
+        // Reads all input entry types: DI, Encoder, AI, IMU, GPS, Magnetometer, Barometer.
         for (auto& pdo : backend->getPDOs()) {
             for (auto& e : pdo.entries) {
-                if (e.type == EntryType::DigitalInput ||
-                    e.type == EntryType::Encoder ||
-                    e.type == EntryType::AnalogInput) {
+                if (isInputEntryType(e.type)) {
                     e.read();
                 }
             }
@@ -77,11 +75,10 @@ void HardwareRegistry::writeAll() noexcept
     for (auto& backend : backends_) {
         // Phase 3: concrete write sweep — flush pulse/desired state into image
         // No virtual calls — PDOEntry::write() is a concrete struct method.
-        // Only write OUTPUT entries; inputs are read by readAll().
+        // Writes all output entry types: DO, AO.
         for (auto& pdo : backend->getPDOs()) {
             for (auto& e : pdo.entries) {
-                if (e.type == EntryType::DigitalOutput ||
-                    e.type == EntryType::AnalogOutput) {
+                if (isOutputEntryType(e.type)) {
                     e.write();
                 }
             }
@@ -138,23 +135,25 @@ void HardwareRegistry::printState() const
         for (const auto& pdo : backend->getPDOs()) {
             for (const auto& e : pdo.entries) {
                 switch (e.type) {
-                case EntryType::Encoder:
-                    std::printf("  Encoder  uuid=%-40s  count=%-8ld\n",
-                                e.uuid.c_str(),
-                                static_cast<long>(e.getCount()));
-                    break;
-                case EntryType::DigitalInput:
-                    std::printf("  DI       uuid=%-40s  state=%s\n",
+                case EntryType::BoolInput:
+                    std::printf("  BoolIn   uuid=%-40s  state=%s\n",
                                 e.uuid.c_str(), e.getBool() ? "HIGH" : "low ");
                     break;
-                case EntryType::DigitalOutput:
-                    std::printf("  DO       uuid=%-40s  state=%s\n",
+                case EntryType::BoolOutput:
+                    std::printf("  BoolOut  uuid=%-40s  state=%s\n",
                                 e.uuid.c_str(), e.getBool() ? "ON " : "off");
                     break;
-                case EntryType::AnalogInput:
-                    std::printf("  AI       uuid=%-40s  raw=%-6d\n",
-                                e.uuid.c_str(),
-                                static_cast<int>(e.getRawAdc()));
+                case EntryType::Int32Input:
+                    std::printf("  Int32In  uuid=%-40s  value=%-12d\n",
+                                e.uuid.c_str(), static_cast<int>(e.getInt32()));
+                    break;
+                case EntryType::Int16Input:
+                    std::printf("  Int16In  uuid=%-40s  value=%-6d\n",
+                                e.uuid.c_str(), static_cast<int>(e.getInt16()));
+                    break;
+                case EntryType::FloatInput:
+                    std::printf("  FloatIn  uuid=%-40s  value=%-12.4f\n",
+                                e.uuid.c_str(), e.getFloat());
                     break;
                 default:
                     break;

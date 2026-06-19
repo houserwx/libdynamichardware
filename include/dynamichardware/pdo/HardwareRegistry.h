@@ -75,6 +75,33 @@ public:
     [[nodiscard]] bool isFrozen() const noexcept { return frozen_; }
 
 private:
+    // Classify EntryType for RT sweep filtering.
+    // isInputEntryType  → entry should be read during readAll().
+    // isOutputEntryType → entry should be written during writeAll().
+    // Message types are handled exclusively by adapter hooks (not swept).
+    [[nodiscard]] static bool isInputEntryType(EntryType t) noexcept {
+        switch (t) {
+            case EntryType::BoolInput:
+            case EntryType::Int32Input:
+            case EntryType::Int16Input:
+            case EntryType::FloatInput:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    [[nodiscard]] static bool isOutputEntryType(EntryType t) noexcept {
+        switch (t) {
+            case EntryType::BoolOutput:
+            case EntryType::Int16Output:
+            case EntryType::FloatOutput:
+                return true;
+            default:
+                return false;
+        }
+    }
+
     std::vector<std::unique_ptr<IHardwareAdapter>> backends_;
     std::unordered_map<std::string, PDOEntry*>     uuidMap_;
     bool                                            frozen_{false};

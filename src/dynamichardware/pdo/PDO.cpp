@@ -9,53 +9,25 @@ void PDOEntry::read() noexcept
     if (!image) return;
 
     switch (type) {
-        case EntryType::DigitalInput: {
+        case EntryType::BoolInput: {
             const uint8_t byte = image[byteOffset];
             const bool raw = (byte >> bitOffset) & 1u;
             boolVal_ = debounce.filter(raw, dynamichardware::rt::signalProcessNowNs());
             break;
         }
-        case EntryType::Encoder: {
-            // 32-bit little-endian
-            std::memcpy(&countVal_, image + byteOffset, sizeof(countVal_));
+        case EntryType::Int32Input: {
+            // 32-bit little-endian (encoder, pulse width, etc.)
+            std::memcpy(&int32Val_, image + byteOffset, sizeof(int32Val_));
             break;
         }
-        case EntryType::AnalogInput: {
-            // 16-bit little-endian
-            int16_t raw;
-            std::memcpy(&raw, image + byteOffset, sizeof(raw));
-            adcVal_ = raw;
+        case EntryType::Int16Input: {
+            // 16-bit little-endian (ADC value)
+            std::memcpy(&int16Val_, image + byteOffset, sizeof(int16Val_));
             break;
         }
-        // IMU sensor types — read float values from image buffer
-        // I2C/SPI adapters write calibrated float values directly into the PDO image
-        case EntryType::IMU_GyroX:  { float v; std::memcpy(&v, image + byteOffset, sizeof(v)); gyroXVal_ = v; break; }
-        case EntryType::IMU_GyroY:  { float v; std::memcpy(&v, image + byteOffset, sizeof(v)); gyroYVal_ = v; break; }
-        case EntryType::IMU_GyroZ:  { float v; std::memcpy(&v, image + byteOffset, sizeof(v)); gyroZVal_ = v; break; }
-        case EntryType::IMU_AccelX: { float v; std::memcpy(&v, image + byteOffset, sizeof(v)); accelXVal_ = v; break; }
-        case EntryType::IMU_AccelY: { float v; std::memcpy(&v, image + byteOffset, sizeof(v)); accelYVal_ = v; break; }
-        case EntryType::IMU_AccelZ: { float v; std::memcpy(&v, image + byteOffset, sizeof(v)); accelZVal_ = v; break; }
-        case EntryType::MagnetometerX: { float v; std::memcpy(&v, image + byteOffset, sizeof(v)); magXVal_ = v; break; }
-        case EntryType::MagnetometerY: { float v; std::memcpy(&v, image + byteOffset, sizeof(v)); magYVal_ = v; break; }
-        case EntryType::MagnetometerZ: { float v; std::memcpy(&v, image + byteOffset, sizeof(v)); magZVal_ = v; break; }
-        case EntryType::Barometer: {
-            // Barometer has two floats (pressure + altitude) packed sequentially
-            float pressure, altitude;
-            std::memcpy(&pressure, image + byteOffset, sizeof(float));
-            std::memcpy(&altitude, image + byteOffset + sizeof(float), sizeof(float));
-            baroPressureVal_ = pressure;
-            baroAltitudeVal_ = altitude;
-            break;
-        }
-        // GPS sensor types — read float values from image buffer
-        case EntryType::GPS_Latitude:   { float v; std::memcpy(&v, image + byteOffset, sizeof(v)); floatVal_ = v; break; }
-        case EntryType::GPS_Longitude:  { float v; std::memcpy(&v, image + byteOffset, sizeof(v)); floatVal_ = v; break; }
-        case EntryType::GPS_Altitude:   { float v; std::memcpy(&v, image + byteOffset, sizeof(v)); floatVal_ = v; break; }
-        case EntryType::GPS_Heading:    { float v; std::memcpy(&v, image + byteOffset, sizeof(v)); floatVal_ = v; break; }
-        case EntryType::GPS_FixQuality: {
-            int16_t raw;
-            std::memcpy(&raw, image + byteOffset, sizeof(raw));
-            adcVal_ = raw;
+        case EntryType::FloatInput: {
+            // 32-bit IEEE-754 float — used by any calibrated sensor (IMU, GPS, baro, etc.)
+            std::memcpy(&floatVal_, image + byteOffset, sizeof(floatVal_));
             break;
         }
         default:
@@ -68,7 +40,7 @@ void PDOEntry::write() noexcept
     if (!image) return;
 
     switch (type) {
-        case EntryType::DigitalOutput: {
+        case EntryType::BoolOutput: {
             const bool pinState = pulse.tick(dynamichardware::rt::signalProcessNowNs());
             uint8_t* bytePtr = image + byteOffset;
             if (pinState) {
@@ -78,8 +50,12 @@ void PDOEntry::write() noexcept
             }
             break;
         }
-        case EntryType::AnalogOutput: {
-            std::memcpy(image + byteOffset, &adcDesired_, sizeof(adcDesired_));
+        case EntryType::Int16Output: {
+            std::memcpy(image + byteOffset, &int16Desired_, sizeof(int16Desired_));
+            break;
+        }
+        case EntryType::FloatOutput: {
+            std::memcpy(image + byteOffset, &floatDesired_, sizeof(floatDesired_));
             break;
         }
         default:
@@ -89,14 +65,14 @@ void PDOEntry::write() noexcept
 
 bool PDOEntry::getBool() const noexcept
 {
-    if (type == EntryType::DigitalInput) return boolVal_;
-    if (type == EntryType::DigitalOutput) return pulse.isHighOrLatched();
+    if (type == EntryType::BoolInput) return boolVal_;
+    if (type == EntryType::BoolOutput) return pulse.isHighOrLatched();
     return false;
 }
 
 void PDOEntry::setBool(bool v) noexcept
 {
-    if (type == EntryType::DigitalOutput) {
+    if (type == EntryType::BoolOutput) {
         pulse.arm(v, dynamichardware::rt::signalProcessNowNs());
     }
 }

@@ -49,8 +49,11 @@ PDOEntry PDOFactory::create(
     return entry;
 }
 
-// ============================================================================
-// stringToEntryType — "DigitalInput" → EntryType::DigitalInput
+// stringToEntryType — catalog channelType string → EntryType (value format)
+//
+// The catalog may use semantic names ("IMU_GyroX", "GPS_Latitude") for
+// human readability. This function maps them to the transport-agnostic
+// value type based on the data format in the process image.
 // ============================================================================
 EntryType PDOFactory::stringToEntryType(const std::string& channelType)
 {
@@ -61,117 +64,106 @@ EntryType PDOFactory::stringToEntryType(const std::string& channelType)
         });
     };
 
-    if (icmp(channelType, "DigitalInput"))  return EntryType::DigitalInput;
-    if (icmp(channelType, "DigitalOutput")) return EntryType::DigitalOutput;
-    if (icmp(channelType, "Encoder"))       return EntryType::Encoder;
-    if (icmp(channelType, "AnalogInput"))   return EntryType::AnalogInput;
-    if (icmp(channelType, "AnalogOutput"))  return EntryType::AnalogOutput;
-    if (icmp(channelType, "MessageOut"))    return EntryType::MessageOut;
-    if (icmp(channelType, "MessageIn"))     return EntryType::MessageIn;
+    // Direct value-type mappings (preferred catalog format)
+    if (icmp(channelType, "BoolInput"))    return EntryType::BoolInput;
+    if (icmp(channelType, "BoolOutput"))   return EntryType::BoolOutput;
+    if (icmp(channelType, "Int32Input"))   return EntryType::Int32Input;
+    if (icmp(channelType, "Int16Input"))   return EntryType::Int16Input;
+    if (icmp(channelType, "Int16Output"))  return EntryType::Int16Output;
+    if (icmp(channelType, "FloatInput"))   return EntryType::FloatInput;
+    if (icmp(channelType, "FloatOutput"))  return EntryType::FloatOutput;
+    if (icmp(channelType, "MessageOut"))   return EntryType::MessageOut;
+    if (icmp(channelType, "MessageIn"))    return EntryType::MessageIn;
 
-    // IMU sensor types
-    if (icmp(channelType, "IMU_GyroX"))     return EntryType::IMU_GyroX;
-    if (icmp(channelType, "IMU_GyroY"))     return EntryType::IMU_GyroY;
-    if (icmp(channelType, "IMU_GyroZ"))     return EntryType::IMU_GyroZ;
-    if (icmp(channelType, "IMU_AccelX"))    return EntryType::IMU_AccelX;
-    if (icmp(channelType, "IMU_AccelY"))    return EntryType::IMU_AccelY;
-    if (icmp(channelType, "IMU_AccelZ"))    return EntryType::IMU_AccelZ;
-    if (icmp(channelType, "MagnetometerX")) return EntryType::MagnetometerX;
-    if (icmp(channelType, "MagnetometerY")) return EntryType::MagnetometerY;
-    if (icmp(channelType, "MagnetometerZ")) return EntryType::MagnetometerZ;
-    if (icmp(channelType, "Barometer"))     return EntryType::Barometer;
+    // Legacy aliases (for backward compatibility with existing catalogs)
+    if (icmp(channelType, "DigitalInput"))  return EntryType::BoolInput;
+    if (icmp(channelType, "DigitalOutput")) return EntryType::BoolOutput;
+    if (icmp(channelType, "Encoder"))       return EntryType::Int32Input;
+    if (icmp(channelType, "AnalogInput"))   return EntryType::Int16Input;
+    if (icmp(channelType, "AnalogOutput"))  return EntryType::Int16Output;
+
+    // Semantic sensor types — map to value format
+    // IMU sensors (float)
+    if (icmp(channelType, "IMU_GyroX"))     return EntryType::FloatInput;
+    if (icmp(channelType, "IMU_GyroY"))     return EntryType::FloatInput;
+    if (icmp(channelType, "IMU_GyroZ"))     return EntryType::FloatInput;
+    if (icmp(channelType, "IMU_AccelX"))    return EntryType::FloatInput;
+    if (icmp(channelType, "IMU_AccelY"))    return EntryType::FloatInput;
+    if (icmp(channelType, "IMU_AccelZ"))    return EntryType::FloatInput;
+    if (icmp(channelType, "MagnetometerX")) return EntryType::FloatInput;
+    if (icmp(channelType, "MagnetometerY")) return EntryType::FloatInput;
+    if (icmp(channelType, "MagnetometerZ")) return EntryType::FloatInput;
+    if (icmp(channelType, "Barometer"))     return EntryType::FloatInput;
 
     // GPS types
-    if (icmp(channelType, "GPS_Latitude"))    return EntryType::GPS_Latitude;
-    if (icmp(channelType, "GPS_Longitude"))   return EntryType::GPS_Longitude;
-    if (icmp(channelType, "GPS_Altitude"))    return EntryType::GPS_Altitude;
-    if (icmp(channelType, "GPS_Heading"))     return EntryType::GPS_Heading;
-    if (icmp(channelType, "GPS_FixQuality"))  return EntryType::GPS_FixQuality;
+    if (icmp(channelType, "GPS_Latitude"))   return EntryType::FloatInput;
+    if (icmp(channelType, "GPS_Longitude"))  return EntryType::FloatInput;
+    if (icmp(channelType, "GPS_Altitude"))   return EntryType::FloatInput;
+    if (icmp(channelType, "GPS_Heading"))    return EntryType::FloatInput;
+    if (icmp(channelType, "GPS_FixQuality")) return EntryType::Int16Input;
 
-    // Unknown — default to DigitalInput
-    return EntryType::DigitalInput;
+    // Unknown — default to BoolInput (safest conservative default)
+    return EntryType::BoolInput;
 }
 
 // ============================================================================
-// entryTypeToString — EntryType::DigitalInput → "DigitalInput"
+// entryTypeToString — EntryType → string (composited from bitmask fields)
 // ============================================================================
 const char* PDOFactory::entryTypeToString(EntryType type)
 {
-    switch (type) {
-        case EntryType::DigitalInput:   return "DigitalInput";
-        case EntryType::DigitalOutput:  return "DigitalOutput";
-        case EntryType::Encoder:        return "Encoder";
-        case EntryType::AnalogInput:    return "AnalogInput";
-        case EntryType::AnalogOutput:   return "AnalogOutput";
-        case EntryType::MessageOut:     return "MessageOut";
-        case EntryType::MessageIn:      return "MessageIn";
-        case EntryType::IMU_GyroX:      return "IMU_GyroX";
-        case EntryType::IMU_GyroY:      return "IMU_GyroY";
-        case EntryType::IMU_GyroZ:      return "IMU_GyroZ";
-        case EntryType::IMU_AccelX:     return "IMU_AccelX";
-        case EntryType::IMU_AccelY:     return "IMU_AccelY";
-        case EntryType::IMU_AccelZ:     return "IMU_AccelZ";
-        case EntryType::MagnetometerX:  return "MagnetometerX";
-        case EntryType::MagnetometerY:  return "MagnetometerY";
-        case EntryType::MagnetometerZ:  return "MagnetometerZ";
-        case EntryType::Barometer:      return "Barometer";
-        case EntryType::GPS_Latitude:   return "GPS_Latitude";
-        case EntryType::GPS_Longitude:  return "GPS_Longitude";
-        case EntryType::GPS_Altitude:   return "GPS_Altitude";
-        case EntryType::GPS_Heading:    return "GPS_Heading";
-        case EntryType::GPS_FixQuality: return "GPS_FixQuality";
+    // Static buffer for dynamic composition (not RT-safe, but this is init-time only)
+    static char buf[32];
+
+    // Well-known convenience constants get their names directly
+    if (type == EntryType::BoolInput)    return "BoolInput";
+    if (type == EntryType::BoolOutput)   return "BoolOutput";
+    if (type == EntryType::Int8Input)    return "Int8Input";
+    if (type == EntryType::Int16Input)   return "Int16Input";
+    if (type == EntryType::Int32Input)   return "Int32Input";
+    if (type == EntryType::Int8Output)   return "Int8Output";
+    if (type == EntryType::Int16Output)  return "Int16Output";
+    if (type == EntryType::Int32Output)  return "Int32Output";
+    if (type == EntryType::FloatInput)   return "FloatInput";
+    if (type == EntryType::FloatOutput)  return "FloatOutput";
+    if (type == EntryType::MessageIn)    return "MessageIn";
+    if (type == EntryType::MessageOut)   return "MessageOut";
+
+    // Any other bitmask composition gets a dynamic name
+    const char* dir = entryIsInput(type) ? "In" : entryIsOutput(type) ? "Out" : "";
+    const char* base;
+    switch (type & 0x18) {
+        case BASE_BOOL:  base = "Bool";  break;
+        case BASE_INT:   base = "Int";   break;
+        case BASE_FLOAT: base = "Float"; break;
+        case BASE_MSG:   base = "Msg";   break;
+        default:         base = "?";     break;
     }
-    return "Unknown";
+    const char* size;
+    switch (type & 0x60) {
+        case SZ_1:  size = "1";  break;
+        case SZ_8:  size = "8";  break;
+        case SZ_16: size = "16"; break;
+        case SZ_32: size = "32"; break;
+        default:    size = "?";  break;
+    }
+    std::snprintf(buf, sizeof(buf), "%s%s%s%s", entryIsSigned(type) ? "" : "U", base, size, dir);
+    return buf;
 }
 
 // ============================================================================
 // defaultBitLength — EntryType → bit width in process image
+// Derived from the bitmask size field — no switch needed.
 // ============================================================================
 uint8_t PDOFactory::defaultBitLength(EntryType type)
 {
-    switch (type) {
-        // 1-bit digital I/O
-        case EntryType::DigitalInput:
-        case EntryType::DigitalOutput:
-            return 1;
+    if (entryIsMessage(type)) return 0;
 
-        // 16-bit analog
-        case EntryType::AnalogInput:
-        case EntryType::AnalogOutput:
-            return 16;
-
-        // 32-bit encoder / float
-        case EntryType::Encoder:
-        case EntryType::IMU_GyroX:
-        case EntryType::IMU_GyroY:
-        case EntryType::IMU_GyroZ:
-        case EntryType::IMU_AccelX:
-        case EntryType::IMU_AccelY:
-        case EntryType::IMU_AccelZ:
-        case EntryType::MagnetometerX:
-        case EntryType::MagnetometerY:
-        case EntryType::MagnetometerZ:
-        case EntryType::GPS_Latitude:
-        case EntryType::GPS_Longitude:
-        case EntryType::GPS_Altitude:
-        case EntryType::GPS_Heading:
-            return 32;
-
-        // Barometer has two floats (pressure + altitude) = 64 bits
-        case EntryType::Barometer:
-            return 64;
-
-        // GPS fix quality is 16-bit
-        case EntryType::GPS_FixQuality:
-            return 16;
-
-        // Message slots use memcpy, not bit extraction — bitLength is 0 (N/A)
-        case EntryType::MessageOut:
-        case EntryType::MessageIn:
-            return 0;
-
-        default:
-            return 1;  // safe default
+    switch (entryBitSize(type)) {
+        case SZ_1:  return 1;
+        case SZ_8:  return 8;
+        case SZ_16: return 16;
+        case SZ_32: return 32;
+        default:    return 1;  // safe default
     }
 }
 

@@ -121,9 +121,9 @@ bool SimulatedAdapter::initialize()
         sim.byteOffset = entry.byteOffset;
 
         if (e->channelType == "Encoder") {
-            entry.type = dynamichardware::pdo::EntryType::Encoder;
+            entry.type = dynamichardware::pdo::EntryType::Int32Input;
             entry.bitLength = 32;
-            sim.type = dynamichardware::pdo::EntryType::Encoder;
+            sim.type = dynamichardware::pdo::EntryType::Int32Input;
             if (e->sim.rpm > 0.0f && e->sim.rollerDiamMm > 0.0f) {
                 double circ = M_PI * e->sim.rollerDiamMm;
                 double mmPerSec = circ * e->sim.rpm / 60.0;
@@ -135,10 +135,10 @@ bool SimulatedAdapter::initialize()
             }
             currentOffset += sizeof(int64_t);
         } else if (e->channelType == "DigitalInput") {
-            entry.type = dynamichardware::pdo::EntryType::DigitalInput;
+            entry.type = dynamichardware::pdo::EntryType::BoolInput;
             entry.bitLength = 1;
             entry.configureDebounceMs(e->sim.debounceMs);
-            sim.type = dynamichardware::pdo::EntryType::DigitalInput;
+            sim.type = dynamichardware::pdo::EntryType::BoolInput;
             if (e->sim.partsPerMin > 0.0f) {
                 double secPerPart = 60.0 / e->sim.partsPerMin;
                 double cyclesPerSec = 1e9 / cycleNsD_;
@@ -150,20 +150,20 @@ bool SimulatedAdapter::initialize()
             }
             currentOffset += 1;
         } else if (e->channelType == "DigitalOutput") {
-            entry.type = dynamichardware::pdo::EntryType::DigitalOutput;
+            entry.type = dynamichardware::pdo::EntryType::BoolOutput;
             entry.bitLength = 1;
             entry.configurePulseMs(e->sim.pulseMs);
-            sim.type = dynamichardware::pdo::EntryType::DigitalOutput;
+            sim.type = dynamichardware::pdo::EntryType::BoolOutput;
             currentOffset += 1;
         } else if (e->channelType == "AnalogInput") {
-            entry.type = dynamichardware::pdo::EntryType::AnalogInput;
+            entry.type = dynamichardware::pdo::EntryType::Int16Input;
             entry.bitLength = 16;
-            sim.type = dynamichardware::pdo::EntryType::AnalogInput;
+            sim.type = dynamichardware::pdo::EntryType::Int16Input;
             currentOffset += sizeof(int16_t);
         } else if (e->channelType == "AnalogOutput") {
-            entry.type = dynamichardware::pdo::EntryType::AnalogOutput;
+            entry.type = dynamichardware::pdo::EntryType::Int16Output;
             entry.bitLength = 16;
-            sim.type = dynamichardware::pdo::EntryType::AnalogOutput;
+            sim.type = dynamichardware::pdo::EntryType::Int16Output;
             currentOffset += sizeof(int16_t);
         }
 
@@ -187,7 +187,7 @@ void SimulatedAdapter::onBeforeReadInputs() noexcept
         auto& sim = simStates_[i];
 
         switch (sim.type) {
-            case dynamichardware::pdo::EntryType::Encoder: {
+            case dynamichardware::pdo::EntryType::Int32Input: {
                 if (sim.incScaled > 0) {
                     sim.accumulator += sim.incScaled;
                     int64_t whole = sim.accumulator >> kFixedShift;
@@ -199,7 +199,7 @@ void SimulatedAdapter::onBeforeReadInputs() noexcept
                 std::memcpy(image.data() + sim.byteOffset, &sim.count, sizeof(sim.count));
                 break;
             }
-            case dynamichardware::pdo::EntryType::DigitalInput: {
+            case dynamichardware::pdo::EntryType::BoolInput: {
                 sim.cycleTick++;
                 if (sim.halfHighTicks > 0) {
                     // Physics path: variable-width pulse
@@ -227,7 +227,7 @@ void SimulatedAdapter::onBeforeReadInputs() noexcept
                 else            *bytePtr &= ~1u;
                 break;
             }
-            case dynamichardware::pdo::EntryType::AnalogInput: {
+            case dynamichardware::pdo::EntryType::Int16Input: {
                 int16_t val = sim.adc;
                 std::memcpy(image.data() + sim.byteOffset, &val, sizeof(val));
                 break;
