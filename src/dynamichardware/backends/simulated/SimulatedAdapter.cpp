@@ -1,16 +1,51 @@
 #include "dynamichardware/backends/simulated/SimulatedAdapter.h"
 
-#include <nlohmann/json.hpp>
-#include <cstring>
 #include <cmath>
-#include <fstream>
 #include <cstdio>
-
-// Inline fixed-point constants (20-bit fractional)
-static constexpr int kFixedShift = 20;
-static constexpr int64_t kFixedOne = 1LL << kFixedShift;
+#include <fstream>
+#include <nlohmann/json.hpp>
 
 namespace dynamichardware::simulated {
+
+// ---------------------------------------------------------------------------
+// Helper: map channelType string → EntryType enum + isOutput flag
+// ---------------------------------------------------------------------------
+static void resolveChannelType(const std::string& type, pdo::EntryType& outType, bool& outIsOutput) noexcept
+{
+    outIsOutput = false;
+
+    if (type == "BoolInput")   outType = pdo::EntryType::BoolInput;
+    else if (type == "BoolOutput") { outType = pdo::EntryType::BoolOutput; outIsOutput = true; }
+    else if (type == "Int8Input")  outType = pdo::EntryType::Int8Input;
+    else if (type == "Int16Input") outType = pdo::EntryType::Int16Input;
+    else if (type == "Int32Input") outType = pdo::EntryType::Int32Input;
+    else if (type == "Int16Output") { outType = pdo::EntryType::Int16Output; outIsOutput = true; }
+    else if (type == "FloatInput")  outType = pdo::EntryType::FloatInput;
+    else if (type == "FloatOutput") { outType = pdo::EntryType::FloatOutput; outIsOutput = true; }
+}
+
+// ---------------------------------------------------------------------------
+// Helper: compute byte size from EntryType
+// ---------------------------------------------------------------------------
+static std::size_t entryByteSize(pdo::EntryType t) noexcept
+{
+    switch (t) {
+        case pdo::EntryType::BoolInput:
+        case pdo::EntryType::BoolOutput:
+            return 1;
+        case pdo::EntryType::Int8Input:
+            return sizeof(int8_t);
+        case pdo::EntryType::Int16Input:
+        case pdo::EntryType::Int16Output:
+            return sizeof(int16_t);
+        case pdo::EntryType::Int32Input:
+        case pdo::EntryType::FloatInput:
+        case pdo::EntryType::FloatOutput:
+            return sizeof(uint32_t);
+        default:
+            return 1;  // Safe fallback
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Load JSON definitions, register catalog entries
@@ -40,24 +75,30 @@ bool SimulatedAdapter::loadDefinitions(const std::string& path)
         dynamichardware::pdo::CatalogEntry entry;
         entry.key         = "SIM|" + ch.value("name", "");
         entry.uuid        = ch.value("uuid", "");
-        entry.channelType = ch.value("channelType", "DigitalInput");
+        entry.channelType = ch.value("channelType", "BoolInput");
         entry.name        = ch.value("name", "");
         entry.slaveName   = "Simulated";
         entry.isSimulated = true;
-        entry.isOutput    = (entry.channelType == "DigitalOutput" ||
-                             entry.channelType == "AnalogOutput");
+
+        pdo::EntryType resolvedType{};
+        bool isOutput{false};
+        resolveChannelType(entry.channelType, resolvedType, isOutput);
+        entry.isOutput = isOutput;
 
         if (ch.contains("sim")) {
             const auto& s = ch["sim"];
-            entry.sim.rpm             = s.value("rpm", 0.0f);
-            entry.sim.rollerDiamMm    = s.value("rollerDiamMm", 0.0f);
-            entry.sim.resolutionPpr   = s.value("resolutionPpr", 0u);
-            entry.sim.quadrature      = s.value("quadrature", false);
-            entry.sim.partsPerMin     = s.value("partsPerMin", 0.0f);
-            entry.sim.partWidthMm     = s.value("partWidthMm", 0.0f);
-            entry.sim.variancePercent = s.value("variancePercent", 0.0f);
-            entry.sim.pulseMs         = s.value("pulseMs", 0u);
-            entry.sim.debounceMs      = s.value("debounceMs", 0u);
+            // Generic rate-of-change parameters
+            entry.sim.togglePeriodMs     = s.value("togglePeriodMs", 0u);
+            entry.sim.dutyCyclePercent   = s.value("dutyCyclePercent", 50.0f);
+            entry.sim.incrementPerCycle  = s.value("incrementPerCycle", 1);
+            entry.sim.minValue           = s.value("minValue", static_cast<int64_t>(INT64_MIN));
+            entry.sim.maxValue           = s.value("maxValue", static_cast<int64_t>(INT64_MAX));
+            entry.sim.amplitude          = s.value("amplitude", 1.0f);
+            entry.sim.frequencyHz        = s.value("frequencyHz", 1.0f);
+            entry.sim.offset             = s.value("offset", 0.0f);
+            // I/O configuration
+            entry.sim.pulseMs            = s.value("pulseMs", 0u);
+            entry.sim.debounceMs         = s.value("debounceMs", 0u);
         }
 
         catalog_->addEntry(std::move(entry));
@@ -123,16 +164,13 @@ bool SimulatedAdapter::buildRT()
         return true;
     }
 
-    // First pass: compute total image size
+    // First pass: compute total image size based on resolved EntryType
     std::size_t totalImageBytes = 0;
     for (const auto* e : simEntries) {
-        if (e->channelType == "Encoder") {
-            totalImageBytes += sizeof(int64_t);
-        } else if (e->channelType == "AnalogInput" || e->channelType == "AnalogOutput") {
-            totalImageBytes += sizeof(int16_t);
-        } else {
-            totalImageBytes += 1;
-        }
+        pdo::EntryType type{};
+        bool dummyOutput{false};
+        resolveChannelType(e->channelType, type, dummyOutput);
+        totalImageBytes += entryByteSize(type);
     }
 
     // Build PDO
@@ -140,6 +178,8 @@ bool SimulatedAdapter::buildRT()
     pdos_[0].image.resize(totalImageBytes);
     pdos_[0].entries.reserve(simEntries.size());
     simStates_.reserve(simEntries.size());
+
+    double cyclesPerSec = 1e9 / cycleNsD_;
 
     std::size_t currentOffset = 0;
     for (const auto* e : simEntries) {
@@ -150,52 +190,54 @@ bool SimulatedAdapter::buildRT()
         SimState sim;
         sim.byteOffset = entry.byteOffset;
 
-        if (e->channelType == "Encoder") {
-            entry.type      = dynamichardware::pdo::EntryType::Int32Input;
-            entry.bitLength = 32;
-            sim.type        = dynamichardware::pdo::EntryType::Int32Input;
-            if (e->sim.rpm > 0.0f && e->sim.rollerDiamMm > 0.0f) {
-                double circ       = M_PI * e->sim.rollerDiamMm;
-                double mmPerSec   = circ * e->sim.rpm / 60.0;
-                double ticksPerSec = mmPerSec * (e->sim.resolutionPpr > 0 ? e->sim.resolutionPpr : 1024.0);
-                if (e->sim.quadrature) ticksPerSec *= 4.0;
-                sim.incScaled     = static_cast<int64_t>(ticksPerSec * kFixedOne);
-            } else {
-                sim.inc = 10;
-            }
-            currentOffset += sizeof(int64_t);
-        } else if (e->channelType == "DigitalInput") {
-            entry.type      = dynamichardware::pdo::EntryType::BoolInput;
+        pdo::EntryType type{};
+        bool isOutput{false};
+        resolveChannelType(e->channelType, type, isOutput);
+
+        entry.type      = type;
+        if (!isOutput && entryByteSize(type) > 1) {
+            entry.bitLength = static_cast<uint8_t>(entryByteSize(type) * 8);
+        } else {
             entry.bitLength = 1;
-            entry.configureDebounceMs(e->sim.debounceMs);
-            sim.type        = dynamichardware::pdo::EntryType::BoolInput;
-            if (e->sim.partsPerMin > 0.0f) {
-                double secPerPart   = 60.0 / e->sim.partsPerMin;
-                double cyclesPerSec = 1e9 / cycleNsD_;
-                double totalTicks   = secPerPart * cyclesPerSec;
-                sim.halfHighTicks    = static_cast<int32_t>(totalTicks * 0.3);
-                sim.nominalLowTicks  = static_cast<int32_t>(totalTicks * 0.7);
-                sim.varianceFraction = e->sim.variancePercent / 100.0f;
-                sim.varianceSeed     = 1;
-            }
-            currentOffset += 1;
-        } else if (e->channelType == "DigitalOutput") {
-            entry.type      = dynamichardware::pdo::EntryType::BoolOutput;
-            entry.bitLength = 1;
-            entry.configurePulseMs(e->sim.pulseMs);
-            sim.type        = dynamichardware::pdo::EntryType::BoolOutput;
-            currentOffset   += 1;
-        } else if (e->channelType == "AnalogInput") {
-            entry.type      = dynamichardware::pdo::EntryType::Int16Input;
-            entry.bitLength = 16;
-            sim.type        = dynamichardware::pdo::EntryType::Int16Input;
-            currentOffset   += sizeof(int16_t);
-        } else if (e->channelType == "AnalogOutput") {
-            entry.type      = dynamichardware::pdo::EntryType::Int16Output;
-            entry.bitLength = 16;
-            sim.type        = dynamichardware::pdo::EntryType::Int16Output;
-            currentOffset   += sizeof(int16_t);
         }
+
+        sim.type = type;
+
+        // Apply I/O configuration from sim params
+        if (e->sim.debounceMs > 0)
+            entry.configureDebounceMs(e->sim.debounceMs);
+        if (e->sim.pulseMs > 0)
+            entry.configurePulseMs(e->sim.pulseMs);
+
+        // Configure simulation state based on EntryType category
+        if (type == pdo::EntryType::BoolInput || type == pdo::EntryType::BoolOutput) {
+            // Boolean: periodic square-wave toggle
+            uint32_t periodCycles = 0;
+            if (e->sim.togglePeriodMs > 0) {
+                periodCycles = static_cast<uint32_t>(
+                    e->sim.togglePeriodMs / 1000.0 * cyclesPerSec);
+            }
+            sim.togglePeriodCycles = periodCycles;
+            sim.highCycles = static_cast<uint32_t>(periodCycles * e->sim.dutyCyclePercent / 100.0f);
+            sim.lowCycles  = periodCycles - sim.highCycles;
+            sim.isHigh     = false;
+            sim.tickCount  = 0;
+        } else if (entryIsSigned(type) && !isOutput) {
+            // Integer input: linear increment with optional bounds
+            sim.intValue           = 0;
+            sim.incrementPerCycle  = e->sim.incrementPerCycle;
+            sim.minValue           = e->sim.minValue;
+            sim.maxValue           = e->sim.maxValue;
+        } else if ((type & pdo::BASE_FLOAT) && !isOutput) {
+            // Float input: sinusoidal oscillation
+            sim.floatPhase       = 0.0;
+            double hz = e->sim.frequencyHz > 0 ? e->sim.frequencyHz : 1.0;
+            sim.phaseIncrement   = 2.0 * M_PI * hz / cyclesPerSec;
+            sim.floatAmplitude   = e->sim.amplitude;
+            sim.floatOffset      = e->sim.offset;
+        }
+
+        currentOffset += entryByteSize(type);
 
         pdos_[0].entries.push_back(std::move(entry));
         simStates_.push_back(std::move(sim));
@@ -206,57 +248,69 @@ bool SimulatedAdapter::buildRT()
 }
 
 // ---------------------------------------------------------------------------
-// RT cycle: generate synthetic values
+// RT cycle: generate synthetic values for INPUT channels only.
+// OUTPUT channels pass through (application writes desired values).
 // ---------------------------------------------------------------------------
 void SimulatedAdapter::onBeforeReadInputs() noexcept
 {
     if (pdos_.empty()) return;
-    const std::size_t n = simStates_.size(); // Should match pdos_[0].entries.size()
+    const std::size_t n = simStates_.size();
     for (std::size_t i = 0; i < n; ++i) {
-        auto& sim    = simStates_[i];
-        auto& entry  = pdos_[0].entries[i];
+        auto& sim   = simStates_[i];
+        auto& entry = pdos_[0].entries[i];
+
+        // Skip outputs — application controls these
+        if (!entryIsInput(sim.type)) continue;
 
         switch (sim.type) {
-            case dynamichardware::pdo::EntryType::Int32Input: { // Encoder
-                int64_t* ptr       = reinterpret_cast<int64_t*>(entry.image + sim.byteOffset);
-                if (sim.incScaled != 0) {
-                    sim.accumulator += sim.incScaled >> kFixedShift;
-                    *ptr += static_cast<int64_t>(sim.accumulator >> kFixedShift);
-                    sim.accumulator &= ((int64_t(1) << kFixedShift) - 1);
-                } else {
-                    (*ptr) += sim.inc;
+            case pdo::EntryType::BoolInput: { // Periodic square-wave toggle
+                uint8_t* ptr = entry.image + sim.byteOffset;
+                if (sim.togglePeriodCycles > 0) {
+                    bool shouldBeHigh = (sim.tickCount < sim.highCycles);
+                    if (shouldBeHigh != sim.isHigh) {
+                        *ptr       = static_cast<uint8_t>(shouldBeHigh ? 1 : 0);
+                        sim.isHigh = shouldBeHigh;
+                    }
+                    sim.tickCount++;
+                    if (sim.tickCount >= sim.togglePeriodCycles)
+                        sim.tickCount = 0;
                 }
                 break;
             }
-            case dynamichardware::pdo::EntryType::BoolInput: { // Digital input — pulse generator with variance
-                uint8_t* ptr     = entry.image + sim.byteOffset;
-                sim.cycleTick++;
-                if (!sim.toggle && sim.halfHighTicks > 0) {
-                    if (sim.cycleTick >= sim.halfHighTicks) {
-                        *ptr      = 1; // Rising edge
-                        sim.toggle = true;
-                        // Apply jitter to low phase
-                        double randFrac   = (static_cast<double>(sim.varianceSeed % 1000)) / 1000.0;
-                        int32_t jittered  = static_cast<int32_t>(sim.nominalLowTicks * (1.0 + (randFrac - 0.5) * sim.varianceFraction));
-                        sim.cycleTick     = -jittered; // Start counting down for low phase
-                        sim.varianceSeed  = sim.varianceSeed * 1103515245 + 12345;
-                    }
-                } else if (sim.toggle) {
-                    if (sim.cycleTick >= 0) {
-                        *ptr       = 0; // Falling edge
-                        sim.toggle = false;
-                        sim.cycleTick = -sim.halfHighTicks; // Start counting down for high phase (with possible jitter on next cycle)
-                    }
+
+            case pdo::EntryType::Int8Input:
+            case pdo::EntryType::Int16Input:
+            case pdo::EntryType::Int32Input: { // Linear increment with optional bounds
+                sim.intValue += sim.incrementPerCycle;
+                if (sim.intValue > sim.maxValue)
+                    sim.intValue = sim.minValue;  // Wrap to min on overflow
+                else if (sim.intValue < sim.minValue)
+                    sim.intValue = sim.maxValue;  // Wrap to max on underflow
+
+                int32_t val32 = static_cast<int32_t>(sim.intValue);
+                switch (entryBitSize(sim.type)) {
+                    case pdo::SZ_8:
+                        *(reinterpret_cast<int8_t*>(entry.image + sim.byteOffset)) = static_cast<int8_t>(val32);
+                        break;
+                    case pdo::SZ_16:
+                        *(reinterpret_cast<int16_t*>(entry.image + sim.byteOffset)) = static_cast<int16_t>(val32);
+                        break;
+                    default:
+                        *(reinterpret_cast<int32_t*>(entry.image + sim.byteOffset)) = val32;
+                        break;
                 }
                 break;
             }
-            case dynamichardware::pdo::EntryType::Int16Input: { // Analog input — sine wave simulation
-                int16_t* ptr      = reinterpret_cast<int16_t*>(entry.image + sim.byteOffset);
-                sim.cycleTick++;
-                double angle      = (sim.cycleTick % 1000) / 1000.0 * 2.0 * M_PI;
-                *ptr              = static_cast<int16_t>(std::sin(angle) * 32767.0 * 0.8);
+
+            case pdo::EntryType::FloatInput: { // Sinusoidal oscillation
+                double sinVal = std::sin(sim.floatPhase) * sim.floatAmplitude + sim.floatOffset;
+                *(reinterpret_cast<float*>(entry.image + sim.byteOffset)) = static_cast<float>(sinVal);
+                sim.floatPhase += sim.phaseIncrement;
+                if (sim.floatPhase > 2.0 * M_PI)
+                    sim.floatPhase -= 2.0 * M_PI;
                 break;
             }
+
             default:
                 break;
         }

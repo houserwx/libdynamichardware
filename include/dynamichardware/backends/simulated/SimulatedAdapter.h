@@ -8,31 +8,7 @@
 
 namespace dynamichardware::simulated {
 
-// ============================================================
-// SimulatedAdapter — virtual hardware adapter for testing and simulation.
-//
-// Loads a JSON definitions file describing simulated channels,
-// registers them into the HardwareCatalog, builds PDO entries,
-// and generates synthetic I/O each cycle.
-//
-// Definitions JSON format (SimulatedAdapterDefinitions.json):
-// {
-//   "cycleTimeUs": 500,
-//   "channels": [
-//     {
-//       "name": "Encoder-A",
-//       "uuid": "virt-enc-a-0001",
-//       "channelType": "Encoder",
-//       "sim": { "rpm": 3000.0, "rollerDiamMm": 50.0, "resolutionPpr": 1024 }
-//     },
-//     {
-//       "name": "LimitSwitch-1",
-//       "uuid": "virt-di-0001",
-//       "channelType": "DigitalInput",
-//       "sim": { "partsPerMin": 120.0, "variancePercent": 5.0 }
-//     }
-//   ]
-// }
+// ============================================================\n// SimulatedAdapter — virtual hardware adapter for testing and simulation.\n//\n// Loads a JSON definitions file describing simulated channels,\n// registers them into the HardwareCatalog, builds PDO entries,\n// and generates synthetic I/O each cycle.\n//\n// Generic rate-of-change model (mirrors EntryType system):\n//   BoolInput    → periodic square-wave toggle (togglePeriodMs, dutyCyclePercent)\n//   Int*Input    → linear increment per cycle with optional bounds\n//                  (incrementPerCycle, minValue, maxValue)\n//   FloatInput   → sinusoidal oscillation (amplitude, frequencyHz, offset)\n//   Output types → pass-through / echo (no active simulation)\n//\n// Definitions JSON format:\n// {\n//   \"cycleTimeUs\": 500,\n//   \"channels\": [\n//     {\n//       \"name\": \"LimitSwitch-1\",\n//       \"uuid\": \"virt-di-0001\",\n//       \"channelType\": \"BoolInput\",\n//       \"sim\": { \"togglePeriodMs\": 100, \"dutyCyclePercent\": 30.0 }\n//     },\n//     {\n//       \"name\": \"Encoder-A\",\n//       \"uuid\": \"virt-enc-a-0001\",\n//       \"channelType\": \"Int32Input\",\n//       \"sim\": { \"incrementPerCycle\": 10 }\n//     },\n//     {\n//       \"name\": \"TempSensor-1\",\n//       \"uuid\": \"virt-fi-0001\",\n//       \"channelType\": \"FloatInput\",\n//       \"sim\": { \"amplitude\": 5.0, \"frequencyHz\": 0.5, \"offset\": 25.0 }\n//     }\n//   ]\n// }
 //
 // Two-phase lifecycle (ISP split):
 //
@@ -82,23 +58,24 @@ private:
         dynamichardware::pdo::EntryType type{dynamichardware::pdo::EntryType::BoolInput};
         uint32_t  byteOffset{0};
 
-        // Encoder
-        int64_t   count{0};
-        int64_t   inc{10};
-        int64_t   incScaled{0};
-        int64_t   accumulator{0};
+        // Bool: periodic square-wave toggle state machine
+        uint32_t  togglePeriodCycles{0};     ///< Full period in RT cycles (derived from ms)
+        uint32_t  highCycles{0};             ///< HIGH duration in cycles (from dutyCyclePercent)
+        uint32_t  lowCycles{0};              ///< LOW duration in cycles
+        uint32_t  tickCount{0};              ///< Current position within period
+        bool      isHigh{false};
 
-        // DigitalInput
-        int32_t   halfHighTicks{0};
-        int32_t   halfLowTicks{0};
-        int32_t   nominalLowTicks{0};
-        float     varianceFraction{0.0f};
-        uint64_t  varianceSeed{1};
-        bool      toggle{false};
-        int       cycleTick{0};
+        // Integer: linear increment with optional bounded sawtooth
+        int64_t   intValue{0};               ///< Current accumulated value
+        int32_t   incrementPerCycle{1};      ///< Delta per RT cycle
+        int64_t   minValue{INT64_MIN};       ///< Lower bound (wraps if exceeded below)
+        int64_t   maxValue{INT64_MAX};       ///< Upper bound (wraps if exceeded above)
 
-        // AnalogInput
-        int16_t   adc{0};
+        // Float: sinusoidal oscillation
+        double    floatPhase{0.0};           ///< Current phase angle (radians)
+        double    phaseIncrement{0.0};       ///< Phase delta per RT cycle (from frequencyHz + cycle time)
+        float     floatAmplitude{1.0f};      ///< Peak deviation from offset
+        float     floatOffset{0.0f};         ///< DC offset added to sine output
     };
 
     std::vector<SimState> simStates_;

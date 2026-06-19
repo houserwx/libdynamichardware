@@ -348,15 +348,16 @@ static void generateSimDefs(const std::string& catalogPath, const std::string& o
 
         // Preserve sim parameters from source entry (if present)
         json sim;
-        if (e.sim.rpm > 0.0f) sim["rpm"] = e.sim.rpm;
-        if (e.sim.rollerDiamMm > 0.0f) sim["rollerDiamMm"] = e.sim.rollerDiamMm;
-        if (e.sim.resolutionPpr > 0) sim["resolutionPpr"] = e.sim.resolutionPpr;
-        if (e.sim.quadrature) sim["quadrature"] = true;
-        if (e.sim.partsPerMin > 0.0f) sim["partsPerMin"] = e.sim.partsPerMin;
-        if (e.sim.partWidthMm > 0.0f) sim["partWidthMm"] = e.sim.partWidthMm;
-        if (e.sim.variancePercent > 0.0f) sim["variancePercent"] = e.sim.variancePercent;
-        if (e.sim.pulseMs > 0) sim["pulseMs"] = e.sim.pulseMs;
-        if (e.sim.debounceMs > 0) sim["debounceMs"] = e.sim.debounceMs;
+        if (e.sim.togglePeriodMs > 0)       sim["togglePeriodMs"]     = e.sim.togglePeriodMs;
+        if (std::abs(e.sim.dutyCyclePercent - 50.0f) > 0.01f)  sim["dutyCyclePercent"] = e.sim.dutyCyclePercent;
+        if (e.sim.incrementPerCycle != 1)   sim["incrementPerCycle"]  = e.sim.incrementPerCycle;
+        if (e.sim.minValue != INT64_MIN)    sim["minValue"]           = e.sim.minValue;
+        if (e.sim.maxValue != INT64_MAX)    sim["maxValue"]           = e.sim.maxValue;
+        if (std::abs(e.sim.amplitude - 1.0f) > 0.01f)  sim["amplitude"]      = e.sim.amplitude;
+        if (std::abs(e.sim.frequencyHz - 1.0f) > 0.01f) sim["frequencyHz"]    = e.sim.frequencyHz;
+        if (e.sim.offset != 0.0f)           sim["offset"]             = e.sim.offset;
+        if (e.sim.pulseMs > 0)              sim["pulseMs"]            = e.sim.pulseMs;
+        if (e.sim.debounceMs > 0)           sim["debounceMs"]         = e.sim.debounceMs;
         if (!sim.empty()) ch["sim"] = sim;
 
         defs["channels"].push_back(ch);

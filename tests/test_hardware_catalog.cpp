@@ -1,4 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
+#include <climits>
+#include <cmath>
 #include <dynamichardware/pdo/HardwareCatalog.h>
 #include <filesystem>
 #include <fstream>
@@ -103,25 +105,37 @@ TEST_CASE("HardwareCatalog lookup returns correct entry", "[catalog]")
 TEST_CASE("HardwareCatalog SimParams serializes correctly", "[catalog]")
 {
     CatalogEntry::SimParams sim;
-    sim.rpm           = 3000.0f;
-    sim.rollerDiamMm  = 50.0f;
-    sim.resolutionPpr = 1024;
-    sim.quadrature    = true;
+    sim.togglePeriodMs     = 100;
+    sim.dutyCyclePercent   = 60.0f;
+    sim.incrementPerCycle  = 10;
+    sim.minValue           = -1000;
+    sim.maxValue           = 1000;
+    sim.amplitude          = 5.0f;
+    sim.frequencyHz        = 2.0f;
     sim.pulseMs       = 50;
     sim.debounceMs    = 5;
 
     // Serialize to JSON
     auto json = nlohmann::json(sim);
-    CHECK(json["rpm"] == 3000.0f);
-    CHECK(json["rollerDiamMm"] == 50.0f);
-    CHECK(json["resolutionPpr"] == 1024);
-    CHECK(json["quadrature"] == true);
+    CHECK(json["togglePeriodMs"] == 100);
+    CHECK(std::abs(json["dutyCyclePercent"].get<float>() - 60.0f) < 0.001f);
+    CHECK(json["incrementPerCycle"] == 10);
+    CHECK(json["minValue"] == -1000);
+    CHECK(json["maxValue"] == 1000);
+    CHECK(std::abs(json["amplitude"].get<float>() - 5.0f) < 0.001f);
+    CHECK(std::abs(json["frequencyHz"].get<float>() - 2.0f) < 0.001f);
     CHECK(json["pulseMs"] == 50);
+    CHECK(json["debounceMs"] == 5);
 
     // Deserialize
     auto sim2 = json.get<CatalogEntry::SimParams>();
-    CHECK(sim2.rpm == 3000.0f);
-    CHECK(sim2.quadrature == true);
+    CHECK(sim2.togglePeriodMs == 100);
+    CHECK(std::abs(sim2.dutyCyclePercent - 60.0f) < 0.001f);
+    CHECK(sim2.incrementPerCycle == 10);
+    CHECK(sim2.minValue == -1000);
+    CHECK(sim2.maxValue == 1000);
+    CHECK(std::abs(sim2.amplitude - 5.0f) < 0.001f);
+    CHECK(std::abs(sim2.frequencyHz - 2.0f) < 0.001f);
     CHECK(sim2.pulseMs == 50);
 }
 
@@ -137,11 +151,12 @@ TEST_CASE("HardwareCatalog simulated entry round-trip", "[catalog]")
     CatalogEntry entry;
     entry.key         = "virt|sim-test-001";
     entry.uuid        = "virt-sim-001-uuid";
-    entry.channelType = "Encoder";
+    entry.channelType = "Int32Input";
     entry.name        = "Sim-Encoder-A";
     entry.isSimulated = true;
-    entry.sim.rpm     = 1500.0f;
-    entry.sim.resolutionPpr = 2048;
+    entry.sim.incrementPerCycle = 5;
+    entry.sim.minValue          = INT64_MIN;
+    entry.sim.maxValue          = INT64_MAX;
 
     catalog.addEntry(std::move(entry));
     REQUIRE(catalog.save(path) == true);
@@ -153,8 +168,10 @@ TEST_CASE("HardwareCatalog simulated entry round-trip", "[catalog]")
     auto* found = catalog2.findByKey("virt|sim-test-001");
     REQUIRE(found != nullptr);
     CHECK(found->isSimulated == true);
-    CHECK(found->sim.rpm == 1500.0f);
-    CHECK(found->sim.resolutionPpr == 2048);
+    CHECK(found->channelType == "Int32Input");
+    CHECK(found->sim.incrementPerCycle == 5);
+    CHECK(found->sim.minValue == static_cast<int64_t>(INT64_MIN));
+    CHECK(found->sim.maxValue == static_cast<int64_t>(INT64_MAX));
 
     std::filesystem::remove(path);
 }

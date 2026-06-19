@@ -36,16 +36,21 @@ class DynamicHardwareContext;
 // SimulatedDefinitionBuilder — fluent builder for creating simulated adapter
 // definitions (JSON files consumed by SimulatedAdapter::loadDefinitions).
 //
+// Mirrors EntryType channel types with generic rate-of-change simulation:
+//   BoolInput  → periodic square-wave toggle
+//   Int*Input  → linear increment per cycle (optional bounds)
+//   FloatInput → sinusoidal oscillation
+//   Output     → pass-through / echo (no sim params needed)
+//
 // Usage:
 //   auto defs = SimulatedDefinitionBuilder::create()
 //       .cycleTimeUs(500)
-//       .encoder("Encoder-A", "virt-enc-a-0001")
-//           .rpm(3000.0f).rollerDiamMm(50.0f).resolutionPpr(1024)
-//       .digitalInput("LimitSwitch-1", "virt-di-0001")
-//           .partsPerMin(120.0f).variancePercent(5.0f)
-//       .digitalOutput("Solenoid-1", "virt-do-0001")
-//           .pulseMs(100)
-//       .analogInput("TempSensor-1", "virt-ai-0001")
+//       .boolInput("LimitSwitch-1", "virt-di-0001")
+//           .togglePeriodMs(100).dutyCyclePercent(30.0f)
+//       .int32Input("Encoder-A", "virt-enc-a-0001")
+//           .incrementPerCycle(10)
+//       .floatInput("TempSensor-1", "virt-fi-0001")
+//           .amplitude(5.0f).frequencyHz(0.5f).offset(25.0f)
 //       .save("SimulatedAdapterDefinitions.json");
 // ---------------------------------------------------------------------------
 class SimulatedDefinitionBuilder {
@@ -56,30 +61,49 @@ public:
     /// Set cycle time in microseconds.
     SimulatedDefinitionBuilder& cycleTimeUs(int us);
 
-    /// Add an encoder channel. Returns *this for chaining sim params.
-    SimulatedDefinitionBuilder& encoder(const std::string& name, const std::string& uuid);
+    // ---- Channel types (mirror EntryType system) ----
 
-    /// Add a digital input channel.
-    SimulatedDefinitionBuilder& digitalInput(const std::string& name, const std::string& uuid);
+    /// Add a boolean input channel.
+    SimulatedDefinitionBuilder& boolInput(const std::string& name, const std::string& uuid);
 
-    /// Add a digital output channel.
-    SimulatedDefinitionBuilder& digitalOutput(const std::string& name, const std::string& uuid);
+    /// Add a boolean output channel.
+    SimulatedDefinitionBuilder& boolOutput(const std::string& name, const std::string& uuid);
 
-    /// Add an analog input channel.
-    SimulatedDefinitionBuilder& analogInput(const std::string& name, const std::string& uuid);
+    /// Add an 8-bit integer input channel.
+    SimulatedDefinitionBuilder& int8Input(const std::string& name, const std::string& uuid);
 
-    /// Add an analog output channel.
-    SimulatedDefinitionBuilder& analogOutput(const std::string& name, const std::string& uuid);
+    /// Add a 16-bit integer input channel.
+    SimulatedDefinitionBuilder& int16Input(const std::string& name, const std::string& uuid);
+
+    /// Add a 32-bit integer input channel.
+    SimulatedDefinitionBuilder& int32Input(const std::string& name, const std::string& uuid);
+
+    /// Add a 16-bit integer output channel.
+    SimulatedDefinitionBuilder& int16Output(const std::string& name, const std::string& uuid);
+
+    /// Add a float input channel.
+    SimulatedDefinitionBuilder& floatInput(const std::string& name, const std::string& uuid);
+
+    /// Add a float output channel.
+    SimulatedDefinitionBuilder& floatOutput(const std::string& name, const std::string& uuid);
 
     // ---- Simulation parameters (applied to the last-added channel) ----
 
-    SimulatedDefinitionBuilder& rpm(float v);
-    SimulatedDefinitionBuilder& rollerDiamMm(float v);
-    SimulatedDefinitionBuilder& resolutionPpr(uint32_t v);
-    SimulatedDefinitionBuilder& quadrature(bool v = true);
-    SimulatedDefinitionBuilder& partsPerMin(float v);
-    SimulatedDefinitionBuilder& partWidthMm(float v);
-    SimulatedDefinitionBuilder& variancePercent(float v);
+    // Boolean: periodic toggle behavior
+    SimulatedDefinitionBuilder& togglePeriodMs(uint32_t v);
+    SimulatedDefinitionBuilder& dutyCyclePercent(float v);
+
+    // Integer: linear ramp / bounded sawtooth
+    SimulatedDefinitionBuilder& incrementPerCycle(int32_t v);
+    SimulatedDefinitionBuilder& minValue(int64_t v);
+    SimulatedDefinitionBuilder& maxValue(int64_t v);
+
+    // Float: sinusoidal oscillation
+    SimulatedDefinitionBuilder& amplitude(float v);
+    SimulatedDefinitionBuilder& frequencyHz(float v);
+    SimulatedDefinitionBuilder& offset(float v);
+
+    // I/O configuration (any type)
     SimulatedDefinitionBuilder& pulseMs(uint32_t v);
     SimulatedDefinitionBuilder& debounceMs(uint32_t v);
 
@@ -93,7 +117,7 @@ private:
     struct Channel {
         std::string name;
         std::string uuid;
-        std::string channelType;
+        std::string channelType;  ///< EntryType name string (e.g. "BoolInput", "Int32Input")
         pdo::CatalogEntry::SimParams sim{};
     };
 

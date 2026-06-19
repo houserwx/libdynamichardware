@@ -1,9 +1,10 @@
 #pragma once
-#include <string>
-#include <vector>
-#include <unordered_map>
+#include <climits>
 #include <cstdint>
 #include <nlohmann/json.hpp>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 // ============================================================================
 // HardwareCatalog — persisted registry of all discovered PDO channels.
@@ -42,21 +43,34 @@ namespace dynamichardware::pdo {
 // ---------------------------------------------------------------------------
 struct CatalogEntry {
     // Simulation parameters — populated for simulated (virt-*) entries.
-    // SimulatedAdapter reads these to generate synthetic I/O values.
+    // Generic rate-of-change model keyed by EntryType:
+    //   BoolInput      → periodic square-wave toggle (togglePeriodMs, dutyCyclePercent)
+    //   Int*Input      → linear increment per cycle with optional bounds (incrementPerCycle, minValue, maxValue)
+    //   FloatInput     → sinusoidal oscillation (amplitude, frequencyHz, offset)
+    //   Output types   → pass-through / echo; no sim params needed on write channels
     struct SimParams {
-        float    rpm           {0.0f};
-        float    rollerDiamMm  {0.0f};
-        uint32_t resolutionPpr {0};
-        bool     quadrature    {false};
-        float    partsPerMin   {0.0f};
-        float    partWidthMm   {0.0f};
-        float    variancePercent{0.0f};
-        uint32_t pulseMs       {0};
-        uint32_t debounceMs    {0};
+        // --- Boolean simulation: periodic toggle ---
+        uint32_t  togglePeriodMs     {0};     ///< Full high+low period in ms
+        float     dutyCyclePercent   {50.0f}; ///< Percent of period spent HIGH
+
+        // --- Integer simulation: linear ramp or bounded sawtooth ---
+        int32_t   incrementPerCycle  {1};     ///< Value added each RT cycle
+        int64_t   minValue           {INT64_MIN}; ///< Optional lower bound (clamps + wraps)
+        int64_t   maxValue           {INT64_MAX}; ///< Optional upper bound (clamps + wraps)
+
+        // --- Float simulation: sinusoidal wave ---
+        float     amplitude          {1.0f};  ///< Peak deviation from offset
+        float     frequencyHz        {1.0f};  ///< Oscillation frequency in Hz
+        float     offset             {0.0f};  ///< DC offset added to sine output
+
+        // --- Legacy I/O configuration (applies to any type) ---
+        uint32_t  pulseMs            {0};      ///< Pulse machine arming duration (ms)
+        uint32_t  debounceMs         {0};      ///< Debounce filter window (ms)
 
         NLOHMANN_DEFINE_TYPE_INTRUSIVE(SimParams,
-            rpm, rollerDiamMm, resolutionPpr, quadrature,
-            partsPerMin, partWidthMm, variancePercent,
+            togglePeriodMs, dutyCyclePercent,
+            incrementPerCycle, minValue, maxValue,
+            amplitude, frequencyHz, offset,
             pulseMs, debounceMs)
     };
 

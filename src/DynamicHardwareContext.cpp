@@ -10,6 +10,8 @@
 #include "dynamichardware/backends/spi/SPIAdapter.h"
 #include "dynamichardware/backends/simulated/SimulatedAdapter.h"
 
+#include <cmath>
+#include <climits>
 #include <cstdio>
 #include <fstream>
 #include <memory>
@@ -38,6 +40,10 @@ struct DynamicHardwareContext::Impl {
     // Survives unique_ptr move into registry.
     gpio::GPIOAdapter* gpioPtr{nullptr};
 };
+
+// ============================================================================
+// SimulatedDefinitionBuilder implementation
+// ============================================================================
 SimulatedDefinitionBuilder SimulatedDefinitionBuilder::create()
 {
     return SimulatedDefinitionBuilder{};
@@ -49,77 +55,103 @@ SimulatedDefinitionBuilder& SimulatedDefinitionBuilder::cycleTimeUs(int us)
     return *this;
 }
 
-SimulatedDefinitionBuilder& SimulatedDefinitionBuilder::encoder(const std::string& name, const std::string& uuid)
+// ---- Channel types (mirror EntryType system) ----
+
+SimulatedDefinitionBuilder& SimulatedDefinitionBuilder::boolInput(const std::string& name, const std::string& uuid)
 {
-    channels_.push_back({name, uuid, "Encoder", {}});
+    channels_.push_back({name, uuid, "BoolInput", {}});
     return *this;
 }
 
-SimulatedDefinitionBuilder& SimulatedDefinitionBuilder::digitalInput(const std::string& name, const std::string& uuid)
+SimulatedDefinitionBuilder& SimulatedDefinitionBuilder::boolOutput(const std::string& name, const std::string& uuid)
 {
-    channels_.push_back({name, uuid, "DigitalInput", {}});
+    channels_.push_back({name, uuid, "BoolOutput", {}});
     return *this;
 }
 
-SimulatedDefinitionBuilder& SimulatedDefinitionBuilder::digitalOutput(const std::string& name, const std::string& uuid)
+SimulatedDefinitionBuilder& SimulatedDefinitionBuilder::int8Input(const std::string& name, const std::string& uuid)
 {
-    channels_.push_back({name, uuid, "DigitalOutput", {}});
+    channels_.push_back({name, uuid, "Int8Input", {}});
     return *this;
 }
 
-SimulatedDefinitionBuilder& SimulatedDefinitionBuilder::analogInput(const std::string& name, const std::string& uuid)
+SimulatedDefinitionBuilder& SimulatedDefinitionBuilder::int16Input(const std::string& name, const std::string& uuid)
 {
-    channels_.push_back({name, uuid, "AnalogInput", {}});
+    channels_.push_back({name, uuid, "Int16Input", {}});
     return *this;
 }
 
-SimulatedDefinitionBuilder& SimulatedDefinitionBuilder::analogOutput(const std::string& name, const std::string& uuid)
+SimulatedDefinitionBuilder& SimulatedDefinitionBuilder::int32Input(const std::string& name, const std::string& uuid)
 {
-    channels_.push_back({name, uuid, "AnalogOutput", {}});
+    channels_.push_back({name, uuid, "Int32Input", {}});
     return *this;
 }
 
-// ---- Simulation parameters ----
-
-SimulatedDefinitionBuilder& SimulatedDefinitionBuilder::rpm(float v)
+SimulatedDefinitionBuilder& SimulatedDefinitionBuilder::int16Output(const std::string& name, const std::string& uuid)
 {
-    lastChannel().sim.rpm = v;
+    channels_.push_back({name, uuid, "Int16Output", {}});
     return *this;
 }
 
-SimulatedDefinitionBuilder& SimulatedDefinitionBuilder::rollerDiamMm(float v)
+SimulatedDefinitionBuilder& SimulatedDefinitionBuilder::floatInput(const std::string& name, const std::string& uuid)
 {
-    lastChannel().sim.rollerDiamMm = v;
+    channels_.push_back({name, uuid, "FloatInput", {}});
     return *this;
 }
 
-SimulatedDefinitionBuilder& SimulatedDefinitionBuilder::resolutionPpr(uint32_t v)
+SimulatedDefinitionBuilder& SimulatedDefinitionBuilder::floatOutput(const std::string& name, const std::string& uuid)
 {
-    lastChannel().sim.resolutionPpr = v;
+    channels_.push_back({name, uuid, "FloatOutput", {}});
     return *this;
 }
 
-SimulatedDefinitionBuilder& SimulatedDefinitionBuilder::quadrature(bool v)
+// ---- Simulation parameters (applied to the last-added channel) ----
+
+SimulatedDefinitionBuilder& SimulatedDefinitionBuilder::togglePeriodMs(uint32_t v)
 {
-    lastChannel().sim.quadrature = v;
+    lastChannel().sim.togglePeriodMs = v;
     return *this;
 }
 
-SimulatedDefinitionBuilder& SimulatedDefinitionBuilder::partsPerMin(float v)
+SimulatedDefinitionBuilder& SimulatedDefinitionBuilder::dutyCyclePercent(float v)
 {
-    lastChannel().sim.partsPerMin = v;
+    lastChannel().sim.dutyCyclePercent = v;
     return *this;
 }
 
-SimulatedDefinitionBuilder& SimulatedDefinitionBuilder::partWidthMm(float v)
+SimulatedDefinitionBuilder& SimulatedDefinitionBuilder::incrementPerCycle(int32_t v)
 {
-    lastChannel().sim.partWidthMm = v;
+    lastChannel().sim.incrementPerCycle = v;
     return *this;
 }
 
-SimulatedDefinitionBuilder& SimulatedDefinitionBuilder::variancePercent(float v)
+SimulatedDefinitionBuilder& SimulatedDefinitionBuilder::minValue(int64_t v)
 {
-    lastChannel().sim.variancePercent = v;
+    lastChannel().sim.minValue = v;
+    return *this;
+}
+
+SimulatedDefinitionBuilder& SimulatedDefinitionBuilder::maxValue(int64_t v)
+{
+    lastChannel().sim.maxValue = v;
+    return *this;
+}
+
+SimulatedDefinitionBuilder& SimulatedDefinitionBuilder::amplitude(float v)
+{
+    lastChannel().sim.amplitude = v;
+    return *this;
+}
+
+SimulatedDefinitionBuilder& SimulatedDefinitionBuilder::frequencyHz(float v)
+{
+    lastChannel().sim.frequencyHz = v;
+    return *this;
+}
+
+SimulatedDefinitionBuilder& SimulatedDefinitionBuilder::offset(float v)
+{
+    lastChannel().sim.offset = v;
     return *this;
 }
 
@@ -135,16 +167,6 @@ SimulatedDefinitionBuilder& SimulatedDefinitionBuilder::debounceMs(uint32_t v)
     return *this;
 }
 
-SimulatedDefinitionBuilder::Channel& SimulatedDefinitionBuilder::lastChannel()
-{
-    if (channels_.empty()) {
-        std::fprintf(stderr, "[SimulatedDefinitionBuilder] No channel added yet — add a channel first\n");
-        static Channel dummy;
-        return dummy;
-    }
-    return channels_.back();
-}
-
 std::string SimulatedDefinitionBuilder::toJson() const
 {
     using json = nlohmann::json;
@@ -158,15 +180,16 @@ std::string SimulatedDefinitionBuilder::toJson() const
 
         // Only include sim params that are non-default
         json sim;
-        if (ch.sim.rpm > 0.0f) sim["rpm"] = ch.sim.rpm;
-        if (ch.sim.rollerDiamMm > 0.0f) sim["rollerDiamMm"] = ch.sim.rollerDiamMm;
-        if (ch.sim.resolutionPpr > 0) sim["resolutionPpr"] = ch.sim.resolutionPpr;
-        if (ch.sim.quadrature) sim["quadrature"] = true;
-        if (ch.sim.partsPerMin > 0.0f) sim["partsPerMin"] = ch.sim.partsPerMin;
-        if (ch.sim.partWidthMm > 0.0f) sim["partWidthMm"] = ch.sim.partWidthMm;
-        if (ch.sim.variancePercent > 0.0f) sim["variancePercent"] = ch.sim.variancePercent;
-        if (ch.sim.pulseMs > 0) sim["pulseMs"] = ch.sim.pulseMs;
-        if (ch.sim.debounceMs > 0) sim["debounceMs"] = ch.sim.debounceMs;
+        if (ch.sim.togglePeriodMs > 0)       sim["togglePeriodMs"]     = ch.sim.togglePeriodMs;
+        if (std::abs(ch.sim.dutyCyclePercent - 50.0f) > 0.01f)  sim["dutyCyclePercent"] = ch.sim.dutyCyclePercent;
+        if (ch.sim.incrementPerCycle != 1)   sim["incrementPerCycle"]  = ch.sim.incrementPerCycle;
+        if (ch.sim.minValue != INT64_MIN)    sim["minValue"]           = ch.sim.minValue;
+        if (ch.sim.maxValue != INT64_MAX)    sim["maxValue"]           = ch.sim.maxValue;
+        if (std::abs(ch.sim.amplitude - 1.0f) > 0.01f)  sim["amplitude"]      = ch.sim.amplitude;
+        if (std::abs(ch.sim.frequencyHz - 1.0f) > 0.01f) sim["frequencyHz"]    = ch.sim.frequencyHz;
+        if (ch.sim.offset != 0.0f)           sim["offset"]             = ch.sim.offset;
+        if (ch.sim.pulseMs > 0)              sim["pulseMs"]            = ch.sim.pulseMs;
+        if (ch.sim.debounceMs > 0)           sim["debounceMs"]         = ch.sim.debounceMs;
         if (!sim.empty()) obj["sim"] = sim;
 
         defs["channels"].push_back(obj);
@@ -188,6 +211,16 @@ bool SimulatedDefinitionBuilder::save(const std::string& path) const
     std::printf("[SimulatedDefinitionBuilder] Saved %zu channel definitions to '%s'\n",
                 channels_.size(), path.c_str());
     return true;
+}
+
+SimulatedDefinitionBuilder::Channel& SimulatedDefinitionBuilder::lastChannel()
+{
+    if (channels_.empty()) {
+        std::fprintf(stderr, "[SimulatedDefinitionBuilder] No channel added yet — add a channel first\n");
+        static Channel dummy;
+        return dummy;
+    }
+    return channels_.back();
 }
 
 // ============================================================================
