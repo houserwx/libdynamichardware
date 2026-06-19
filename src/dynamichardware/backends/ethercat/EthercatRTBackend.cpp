@@ -1,4 +1,4 @@
-#include "dynamichardware/backends/ethercat/EthercatAdapter.h"
+#include "dynamichardware/backends/ethercat/EthercatRTBackend.h"
 #include "dynamichardware/pdo/HardwareCatalog.h"
 #include "dynamichardware/backends/ethercat/SlaveTypeInfo.h"
 
@@ -22,24 +22,27 @@ static uint64_t clockNowNs() noexcept {
            static_cast<uint64_t>(ts.tv_nsec);
 }
 
-// Map PDO geometry to a channel-type string for the hardware catalog.
-static const char* inferChannelType(uint8_t bitLength, bool isOutput) noexcept {
-    if (bitLength == 1U && !isOutput) { return "DigitalInput";  }
-    if (bitLength == 1U &&  isOutput) { return "DigitalOutput"; }
-    if (bitLength == 32U && !isOutput) { return "Encoder";       }
-    if (bitLength == 16U && !isOutput) { return "AnalogInput";   }
-    return "Raw";
+// ---------------------------------------------------------------------------
+// Destructor — release all RT resources.
+// ---------------------------------------------------------------------------
+
+EthercatRTBackend::~EthercatRTBackend()
+{
+#ifdef ETHERCAT_AVAILABLE
+    if (master_) ecrt_release_master(master_);
+#endif
 }
 
 // ---------------------------------------------------------------------------
-// discover() — IDiscoveryBackend implementation
-// Acquires master, creates domain, scans slaves, populates catalog.
-// Master stays open for buildRT() phase but is NOT activated yet.
+// buildRT() — IRTBackend implementation
+/// Fully self-contained: acquires master, scans slaves, creates domain,
+// activates, builds PDO structure, waits for WC_COMPLETE.
 // ---------------------------------------------------------------------------
-bool EthercatAdapter::discover()
+
+bool EthercatRTBackend::buildRT()
 {
 #ifdef ETHERCAT_AVAILABLE
-    // 1. Acquire master
+    // 1. Acquire master (fresh — independent of any prior discovery scan)
     master_ = ecrt_request_master(0);
     if (master_ == nullptr) {
         std::fprintf(stderr, "[EtherCAT] Cannot acquire master — kernel module loaded?\n");
@@ -55,33 +58,10 @@ bool EthercatAdapter::discover()
         return false;
     }
 
-    // 3. Discover slaves, register PDOs in catalog, configure DC sync
-    // The master stays open so buildRT() can activate it later.
-    if (!discoverSlaves()) {
+    // 3. Scan slaves on bus and register PDOs in domain (populates regs_)
+    if (!discoverAndRegister()) {
         ecrt_release_master(master_);
         master_ = nullptr;
-        return false;
-    }
-
-    std::printf("[EtherCAT] Discovery complete: %d slave(s), %zu PDO entries registered in catalog\n",
-                nSlaves_, regs_.size());
-    return true;
-#else
-    std::fprintf(stderr, "[EthercatAdapter] EtherCAT not available — stub mode\n");
-    return false;
-#endif
-}
-
-// ---------------------------------------------------------------------------
-// buildRT() — IRTBackend implementation
-// Activates master, builds PDO structure from discovered entries,
-// waits for WC_COMPLETE. Called after consumer configuration phase.
-// ---------------------------------------------------------------------------
-bool EthercatAdapter::buildRT()
-{
-#ifdef ETHERCAT_AVAILABLE
-    if (master_ == nullptr) {
-        std::fprintf(stderr, "[EtherCAT] Cannot build RT — no master acquired (call discover first)\n");
         return false;
     }
 
@@ -103,7 +83,7 @@ bool EthercatAdapter::buildRT()
         return false;
     }
 
-    // 6. Build PDOEntry structs in pdos_[0] and apply config
+    // 6. Build PDOEntry structs in pdos_[0] from discovered entries + apply config
     buildEntries();
     applyConfig();
 
@@ -123,21 +103,20 @@ bool EthercatAdapter::buildRT()
                     lastDomainState_.working_counter);
     }
     return true;
+
 #else
-    std::fprintf(stderr, "[EthercatAdapter] EtherCAT not available — stub mode\n");
+    std::fprintf(stderr, "[EthercatRTBackend] EtherCAT not available — stub mode\n");
     return false;
 #endif
 }
 
 // ---------------------------------------------------------------------------
-// discoverSlaves()
+// discoverAndRegister() — scan bus + register PDOs in domain → populate regs_
 // ---------------------------------------------------------------------------
 
-bool EthercatAdapter::discoverSlaves()
+bool EthercatRTBackend::discoverAndRegister()
 {
 #ifdef ETHERCAT_AVAILABLE
-    // Use master state to get the actual slave count (avoids "Slave N does not
-    // exist" kernel log spam that a fixed 0..63 loop causes).
     ec_master_state_t ms{};
     ecrt_master_state(master_, &ms);
     const int total = static_cast<int>(ms.slaves_responding);
@@ -161,7 +140,6 @@ bool EthercatAdapter::discoverSlaves()
         }
         ++nSlaves_;
 
-        // Look up slave in ESI-derived table
         const SlaveTypeInfo* sti = lookupSlaveType(si.vendor_id, si.product_code);
         std::printf("[EtherCAT] Slave %u: 0x%08X:0x%08X '%s' [%s] syncs=%u\n",
                     pos, si.vendor_id, si.product_code,
@@ -186,12 +164,11 @@ bool EthercatAdapter::discoverSlaves()
                             "(%s) cycleNs=%u\n",
                             dcMode->assign_activate, dcMode->name, cycleNs_);
             } else {
-                // Slave has no DC mode — explicitly disable to suppress kernel warnings
                 ecrt_slave_config_dc(sc, 0x0000, 0, 0, 0, 0);
             }
         }
 
-        // Walk EEPROM sync managers and auto-discover all PDO entries
+        // Walk EEPROM sync managers and auto-discover all PDO entries.
         for (uint8_t smIdx = 0; smIdx < si.sync_count; ++smIdx) {
             ec_sync_info_t smInfo{};
             if (ecrt_master_get_sync_manager(master_, pos, smIdx, &smInfo) != 0) continue;
@@ -217,29 +194,12 @@ bool EthercatAdapter::discoverSlaves()
                     r.pdoSubindex = entry.subindex;
                     r.bitLength   = entry.bit_length;
                     r.isOutput    = isOutput;
-
-                    if (catalog_ != nullptr) {
-                        const char* ctype = inferChannelType(entry.bit_length, isOutput);
-                        // Register channel in catalog — gets or reuses UUID
-                        catalog_->addEntry(dynamichardware::pdo::CatalogEntry{
-                            catalog_->getOrCreateUuid(
-                                "EC|" + std::to_string(si.vendor_id) +
-                                "|" + std::to_string(si.product_code) +
-                                "|POS" + std::to_string(pos) +
-                                "|" + std::to_string(entry.index) +
-                                ":" + std::to_string(entry.subindex)),
-                            "", ctype, "",
-                            (sti != nullptr) ? sti->type_name : "unknown",
-                            pos, si.product_code, si.revision_number,
-                            entry.index, entry.subindex, isOutput
-                        });
-                        r.uuid = catalog_->getOrCreateUuid(
-                            "EC|" + std::to_string(si.vendor_id) +
-                            "|" + std::to_string(si.product_code) +
-                            "|POS" + std::to_string(pos) +
-                            "|" + std::to_string(entry.index) +
-                            ":" + std::to_string(entry.subindex));
-                    }
+                    r.uuid        = std::string(
+                        "EC|") + std::to_string(si.vendor_id) +
+                                   "|" + std::to_string(si.product_code) +
+                                   "|POS" + std::to_string(pos) +
+                                   "|" + std::to_string(entry.index) +
+                                   ":" + std::to_string(entry.subindex);
 
                     regs_.push_back(r);
                 }
@@ -277,6 +237,7 @@ bool EthercatAdapter::discoverSlaves()
     std::printf("[EtherCAT] Registered %zu PDO entries across %d slave(s)\n",
                 regs_.size(), nSlaves_);
     return true;
+
 #else
     (void)0;
     return false;
@@ -284,14 +245,11 @@ bool EthercatAdapter::discoverSlaves()
 }
 
 // ---------------------------------------------------------------------------
-// buildEntries()
-// Populates pdos_[0].entries with concrete PDOEntry structs.
-// Entry image pointers are set to domainData_ + offset (pointing directly
-// into the IgH-managed buffer — no copy needed).  PDO::image stays empty;
-// PDO::freeze() detects this and skips re-basing.
+// buildEntries() — populate pdos_[0].entries from regs_ + domainData_ buffer.
+// Entry image pointers point directly into the IgH-managed buffer (zero-copy).
 // ---------------------------------------------------------------------------
 
-void EthercatAdapter::buildEntries()
+void EthercatRTBackend::buildEntries()
 {
     pdos_.resize(1);
     pdos_[0].entries.reserve(regs_.size());
@@ -303,9 +261,7 @@ void EthercatAdapter::buildEntries()
         else if (r.bitLength == 32U && !r.isOutput) { type = dynamichardware::pdo::EntryType::Int32Input;    }
         else if (r.bitLength == 16U && !r.isOutput) { type = dynamichardware::pdo::EntryType::Int16Input;    }
         else {
-            // Unsupported width — registered in domain for offset resolution,
-            // but not yet wrapped as a typed entry.
-            continue;
+            continue; // Unsupported width — registered in domain, not yet wrapped as typed entry
         }
 
         std::printf("[EtherCAT]   uuid=%-40s %s bits=%-2u byte=%-4u bit=%u idx=0x%04X:%02X\n",
@@ -330,10 +286,10 @@ void EthercatAdapter::buildEntries()
 }
 
 // ---------------------------------------------------------------------------
-// waitForCommunication()
+// waitForCommunication() — spin loop until WC_COMPLETE or timeout.
 // ---------------------------------------------------------------------------
 
-bool EthercatAdapter::waitForCommunication(uint32_t timeoutMs)
+bool EthercatRTBackend::waitForCommunication(uint32_t timeoutMs)
 {
 #ifdef ETHERCAT_AVAILABLE
     const uint32_t intervalUs = (cycleNs_ / 1000U);
@@ -357,6 +313,7 @@ bool EthercatAdapter::waitForCommunication(uint32_t timeoutMs)
         }
     }
     return lastDomainState_.wc_state == EC_WC_COMPLETE;
+
 #else
     (void)timeoutMs;
     return false;
@@ -364,24 +321,18 @@ bool EthercatAdapter::waitForCommunication(uint32_t timeoutMs)
 }
 
 // ---------------------------------------------------------------------------
-// onBeforeReadInputs() — called every cycle, before reading PDO data
+// onBeforeReadInputs() — called every cycle before reading PDO data.
 // ---------------------------------------------------------------------------
 
-void EthercatAdapter::onBeforeReadInputs() noexcept
+void EthercatRTBackend::onBeforeReadInputs() noexcept
 {
     if (!master_) return;
 #ifdef ETHERCAT_AVAILABLE
-    // 1. Timestamp application time to master for DC reference clock alignment
     const uint64_t appTimeNs = clockNowNs();
     ecrt_master_application_time(master_, appTimeNs);
 
-    // 2. Receive all queued EtherCAT frames
     ecrt_master_receive(master_);
-
-    // 3. Decode received data into domain buffer
     ecrt_domain_process(domain_);
-
-    // 4. Read domain state (working counter, wc_state)
     ecrt_domain_state(domain_, &lastDomainState_);
 
     cycleCount_.fetch_add(1U, std::memory_order_relaxed);
@@ -389,40 +340,36 @@ void EthercatAdapter::onBeforeReadInputs() noexcept
 }
 
 // ---------------------------------------------------------------------------
-// onAfterWriteOutputs() — called every cycle, after writing PDO outputs
+// onAfterWriteOutputs() — called every cycle after writing PDO outputs.
 // ---------------------------------------------------------------------------
 
-void EthercatAdapter::onAfterWriteOutputs() noexcept
+void EthercatRTBackend::onAfterWriteOutputs() noexcept
 {
     if (!master_) return;
 #ifdef ETHERCAT_AVAILABLE
-    // 1. Synchronise reference clock to application time
     const uint64_t nowNs = clockNowNs();
     ecrt_master_application_time(master_, nowNs);
     ecrt_master_sync_reference_clock(master_);
 
-    // 2. Propagate time to all slave clocks in the DC topology
     ecrt_master_sync_slave_clocks(master_);
 
-    // 3. Stage domain data for the next frame
     ecrt_domain_queue(domain_);
-
-    // 4. Transmit queued EtherCAT frames
     ecrt_master_send(master_);
 #endif
 }
 
 // ---------------------------------------------------------------------------
-// applyConfig() — called once after buildEntries(); never in the RT loop
+// applyConfig() — applies pulse/debounce from Config to pdos_[0] entries.
+// Called once during buildRT(); never in the RT loop.
 // ---------------------------------------------------------------------------
 
-void EthercatAdapter::applyConfig()
+void EthercatRTBackend::applyConfig()
 {
     if ((config_ == nullptr) || config_->slaves.empty()) {
         return;
     }
 
-    // Build UUID → SlaveConfig lookup for pulse/debounce overrides
+    // Build UUID → SlaveConfig lookup for pulse/debounce overrides.
     std::unordered_map<std::string, const Config::SlaveConfig*> uuidMap;
     for (const auto& sc : config_->slaves) {
         for (const auto& uuid : sc.uuidMap) {
@@ -439,9 +386,8 @@ void EthercatAdapter::applyConfig()
         for (auto& e : pdos_[0].entries) {
             if (e.uuid.empty() || e.uuid != reg.uuid) continue;
 
-            // Apply pulse/debounce from the common config if available
             if (reg.isOutput) {
-                e.configurePulseMs(100); // Default pulse — can be overridden
+                e.configurePulseMs(100); // Default pulse — can be overridden by alias logic
                 std::printf("[EtherCAT]   uuid=%-40s pulse configured  '%s'\n",
                             reg.uuid.c_str(), it->second->alias.c_str());
             } else {

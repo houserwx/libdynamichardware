@@ -12,7 +12,7 @@
 #include "dynamichardware/backends/gpio/BoardVariant.h"
 
 #ifdef ETHERCAT_AVAILABLE
-#include "dynamichardware/backends/ethercat/EthercatAdapter.h"
+#include "dynamichardware/backends/ethercat/EthercatDiscovery.h"
 #endif
 
 #include <cstdio>

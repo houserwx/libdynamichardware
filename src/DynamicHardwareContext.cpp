@@ -4,7 +4,8 @@
 #include "dynamichardware/pdo/HardwareCatalog.h"
 #include "dynamichardware/pdo/PDOFactory.h"
 
-#include "dynamichardware/backends/ethercat/EthercatAdapter.h"
+#include "dynamichardware/backends/ethercat/EthercatDiscovery.h"
+#include "dynamichardware/backends/ethercat/EthercatRTBackend.h"
 #include "dynamichardware/backends/gpio/GPIOAdapter.h"
 #include "dynamichardware/backends/i2c/I2CAdapter.h"
 #include "dynamichardware/backends/spi/SPIAdapter.h"
@@ -29,8 +30,8 @@ struct DynamicHardwareContext::Impl {
     // Name → UUID mapping (built from catalog)
     std::unordered_map<std::string, std::string> nameToUuid;
 
-    // Owning adapter handles — moved into registry during build()
-    std::unique_ptr<ethercat::EthercatAdapter>  ethercatAdapter;
+    // Owning RT backend handle — moved into registry during build()
+    std::unique_ptr<ethercat::EthercatRTBackend>  ethercatRTBackend;
     std::unique_ptr<gpio::GPIOAdapter>          gpioAdapter;
     std::unique_ptr<i2c::I2CAdapter>            i2cAdapter;
     std::unique_ptr<spi::SPIAdapter>            spiAdapter;
@@ -315,8 +316,7 @@ bool DynamicHardwareContext::build()
 
     // Create and configure adapters
     if (builderState_.enableEthercat) {
-        impl_->ethercatAdapter = std::make_unique<ethercat::EthercatAdapter>(builderState_.ethercatCycleNs);
-        impl_->ethercatAdapter->setCatalog(&catalog);
+        impl_->ethercatRTBackend = std::make_unique<ethercat::EthercatRTBackend>(builderState_.ethercatCycleNs);
     }
 
     if (builderState_.enableGPIO) {
@@ -350,14 +350,19 @@ bool DynamicHardwareContext::build()
     // ==================================================================
     bool catalogChanged = false;
 
-    if (impl_->ethercatAdapter) {
-        std::printf("[Context] Discovering EtherCAT devices...\n");
-        if (!impl_->ethercatAdapter->discover()) {
-            std::printf("[Context] EtherCAT discovery failed (no hardware or stub mode)\n");
-            impl_->ethercatAdapter.reset();
-        } else {
-            catalogChanged = true;
-        }
+    if (builderState_.enableEthercat) {
+        // Discovery is a one-shot scan — create temporary object, discover, then destroy.
+        // All resources (master, domain) are released when the object goes out of scope.
+        {
+            ethercat::EthercatDiscovery discovery(builderState_.ethercatCycleNs);
+            discovery.setCatalog(&catalog);
+            std::printf("[Context] Discovering EtherCAT devices...\n");
+            if (!discovery.discover()) {
+                std::printf("[Context] EtherCAT discovery failed (no hardware or stub mode)\n");
+            } else {
+                catalogChanged = true;
+            }
+        } // discovery destroyed here — all IgH resources released
     }
 
     if (impl_->gpioAdapter) {
@@ -415,10 +420,10 @@ bool DynamicHardwareContext::build()
     // Phase 2 — RT Setup: build PDO structures and activate backends.
     // Backends that succeed are moved into the HardwareRegistry for RT.
     // ==================================================================
-    if (impl_->ethercatAdapter) {
+    if (impl_->ethercatRTBackend) {
         std::printf("[Context] Building EtherCAT backend...\n");
-        if (impl_->ethercatAdapter->buildRT()) {
-            impl_->registry.addBackend(std::move(impl_->ethercatAdapter));
+        if (impl_->ethercatRTBackend->buildRT()) {
+            impl_->registry.addBackend(std::move(impl_->ethercatRTBackend));
         } else {
             std::printf("[Context] EtherCAT RT setup failed (no hardware or stub mode)\n");
         }

@@ -1,8 +1,5 @@
 #pragma once
-#include "dynamichardware/pdo/IDiscoveryBackend.h"
 #include "dynamichardware/pdo/IRTBackend.h"
-#include "dynamichardware/pdo/HardwareCatalog.h"
-#include "dynamichardware/backends/ethercat/SlaveTypeInfo.h"
 #include <vector>
 #include <atomic>
 #include <cstdint>
@@ -18,10 +15,10 @@ extern "C" {
 
 namespace dynamichardware::ethercat {
 
-// ============================================================================
-// Config — EtherCAT-specific configuration loaded from hardware.json.
-// Provides per-UUID pulse/debounce overrides.
-// ============================================================================
+/// ============================================================================
+/// Config — EtherCAT-specific configuration loaded from hardware.json.
+/// Provides per-slave pulse/debounce overrides applied during buildRT().
+/// ============================================================================
 struct Config {
     // Master settings
     int             masterIndex{0};
@@ -48,7 +45,7 @@ struct Config {
     };
     std::vector<SlaveConfig> slaves;
 
-    // Load from JSON
+    /// Load from a JSON file path.
     static Config loadFromJson(const std::string& path);
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(Config,
@@ -56,10 +53,9 @@ struct Config {
         domainName, expectedSlaveCount, slaves)
 };
 
-// ---- Internal PDO registration record (init phase only) ----------------------
-// Holds the EtherCAT PDO geometry discovered during slave scan.
-// After buildEntries() this is only accessed by applyConfig(); it is not
-// used in the RT loop.
+/// ---- Internal PDO registration record ------------------------------------
+/// Holds the EtherCAT PDO geometry discovered during buildRT().
+/// Used to map IgH-managed offsets/bits into concrete PDOEntry structs.
 struct EcEntryReg {
     uint16_t     slavePos;
     uint32_t     vendorId;
@@ -68,58 +64,49 @@ struct EcEntryReg {
     uint8_t      pdoSubindex;
     uint8_t      bitLength;
     bool         isOutput;
-    std::string  uuid;          ///< catalog UUID — used to match config PdoEntryDef
+    std::string  uuid;          ///< catalog UUID — matched against config PdoEntryDef
     unsigned int offset{0};
     unsigned int bitPos{0};
 };
 
-// ---- EthercatAdapter ---------------------------------------------------------
-// Owns one EtherCAT domain (one PDO in pdos_[0]).
-// onBeforeReadInputs()  — receive + domain_process  → fills domainData_ buffer.
-// onAfterWriteOutputs() — domain_queue + send       → flushes domainData_ buffer.
-// Both methods operate on the IgH-managed domainData_ buffer directly.
-// PDOEntry::image pointers inside pdos_[0].entries point into this buffer,
-// so no copy is needed between the IgH buffer and PDO::image.
-//
-// Two-phase lifecycle (ISP split):
-//   discover()  — acquire master, scan slaves, populate catalog. Master stays open.
-//   buildRT()   — activate master, create process data, construct PDO entries,
-//                 wait for WC_COMPLETE. Consumer config happens between phases.
-class EthercatAdapter final
-    : public dynamichardware::pdo::IDiscoveryBackend,
-      public dynamichardware::pdo::IRTBackend {
+/// ---- EthercatRTBackend ---------------------------------------------------
+/// Real-time EtherCAT process-data backend for I/O cycles. Implements IRTBackend.
+///
+/// Fully independent of discovery: acquires its own master/domain in buildRT(),
+/// re-scans the bus, builds PDO structures from scratch (using catalog UUIDs),
+/// and runs the RT loop via onBeforeReadInputs/onAfterWriteOutputs hooks.
+///
+/// Lifecycle:
+///   1. setConfig(cfg)               — optional pulse/debounce overrides
+///   2. buildRT()                    — acquire master, scan slaves, activate, wait WC_COMPLETE
+///   3. onBeforeReadInputs()         — receive + process domain data into buffer
+///   4. onAfterWriteOutputs()        — queue domain + send frames from buffer
+///   5. Destructor                   — release master+domain
+class EthercatRTBackend final : public dynamichardware::pdo::IRTBackend {
 public:
-    /// @param cycleNs  EtherCAT cycle period in nanoseconds (must match DC sync config).
-    explicit EthercatAdapter(uint32_t cycleNs = 1'000'000u) noexcept
+    /// @param cycleNs  Cycle period in nanoseconds (must match DC sync configuration).
+    explicit EthercatRTBackend(uint32_t cycleNs = 1'000'000u) noexcept
         : cycleNs_(cycleNs) {}
 
-    ~EthercatAdapter() override {
-#ifdef ETHERCAT_AVAILABLE
-        if (master_) ecrt_release_master(master_);
-#endif
-    }
+    ~EthercatRTBackend() override;
 
-    // setCatalog inherited from IDiscoveryBackend.
+    // setCatalog inherited protected from IDiscoveryBackend is NOT needed here;
+    // IRTBackend has no catalog_ member. We use catalog indirectly through PDO entries.
 
-    /// Optionally attach the application Config before calling discover().
+    /// Optionally attach application Config before calling buildRT().
     void setConfig(const Config* config) noexcept { config_ = config; }
 
-    // --- IDiscoveryBackend implementation -----------------------------------
-    /// Acquire master, scan slaves on bus, populate catalog with discovered channels.
-    [[nodiscard]] bool discover() override;
-
-    // --- IRTbackend implementation ------------------------------------------
-    /// Activate master, build PDO structure, wait for WC_COMPLETE.
+    // --- IRTBackend implementation ------------------------------------------
+    /// Acquire master, scan slaves, create domain, activate, build PDOs, wait WC_COMPLETE.
     [[nodiscard]] bool buildRT() override;
-    // activate() uses default no-op (activation happens inline during buildRT).
 
-    /// Receive EtherCAT frames and process domain data into domainData_.
+    /// Receive EtherCAT frames and process domain data into the IgH-managed buffer.
     void onBeforeReadInputs()  noexcept override;
 
-    /// Sync clocks, queue domain, and send EtherCAT frames from domainData_.
+    /// Sync clocks, queue domain, and send EtherCAT frames from the buffer.
     void onAfterWriteOutputs() noexcept override;
 
-    // --- Status accessors ---
+    // --- Status accessors ---------------------------------------------------
     [[nodiscard]] bool     isAvailable()          const noexcept { return master_ != nullptr; }
     [[nodiscard]] bool     isFullyCommunicating() const noexcept {
 #ifdef ETHERCAT_AVAILABLE
@@ -136,14 +123,11 @@ public:
         return cycleCount_.load(std::memory_order_relaxed);
     }
 
-    /// Spin the EtherCAT loop until domain reaches WC_COMPLETE, up to timeoutMs.
-    bool waitForCommunication(uint32_t timeoutMs = 5000u);
-
 private:
 #ifdef ETHERCAT_AVAILABLE
     ec_master_t*      master_{nullptr};
     ec_domain_t*      domain_{nullptr};
-    uint8_t*          domainData_{nullptr};  // IgH-managed; PDOEntry::image pointers point into this
+    uint8_t*          domainData_{nullptr};  // IgH-managed; PDOEntry::image pointers point here
     ec_domain_state_t lastDomainState_{};
 #else
     void*             master_{nullptr};
@@ -152,18 +136,19 @@ private:
     struct { uint16_t wc_state{0}; uint16_t working_counter{0}; } lastDomainState_{};
 #endif
     uint32_t          cycleNs_;
-    // catalog_ inherited protected from IDiscoveryBackend.
     const Config*     config_{nullptr};
 
     int               nSlaves_{0};
     std::atomic<uint64_t> cycleCount_{0u};
 
-    // Init-phase storage (not used in RT loop) — stable storage for offset/bitPos pointers
+    /// Init-phase storage — stable storage for offset/bitPos pointers during buildRT().
     std::vector<EcEntryReg> regs_;
 
-    bool discoverSlaves();
-    void buildEntries();    ///< Populates pdos_[0].entries from regs_ + domainData_
-    void applyConfig();     ///< Applies pulse/debounce from Config to pdos_[0] entries
+    // Private helpers (all run within buildRT())
+    bool discoverAndRegister();   ///< Scan slaves, create domain registrations → populate regs_
+    void buildEntries();          ///< Populate pdos_[0].entries from regs_ + domainData_
+    void applyConfig();           ///< Apply pulse/debounce from Config to entries
+    bool waitForCommunication(uint32_t timeoutMs = 5000u);
 };
 
 } // namespace dynamichardware::ethercat

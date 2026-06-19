@@ -21,8 +21,9 @@ set(LD_SOURCES
     src/dynamichardware/pdo/HardwareRegistry.cpp
     src/dynamichardware/pdo/PDOFactory.cpp
     src/dynamichardware/pdo/HardwareCatalog.cpp
-    # EtherCAT adapter
-    src/dynamichardware/backends/ethercat/EthercatAdapter.cpp
+    # EtherCAT backend (split discovery + RT)
+    src/dynamichardware/backends/ethercat/EthercatDiscovery.cpp
+    src/dynamichardware/backends/ethercat/EthercatRTBackend.cpp
     src/dynamichardware/backends/ethercat/kSlaveTypes.cpp
     # GPIO adapter
     src/dynamichardware/backends/gpio/BoardVariant.cpp
@@ -147,6 +148,22 @@ endif()
 set_target_properties(dh-discover PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
 )
+
+# ── Examples ─────────────────────────────────────────────────────────────────
+
+add_executable(simulated_io_demo examples/simulated_io_demo.cpp)
+target_link_libraries(simulated_io_demo PRIVATE dynamichardware)
+target_include_directories(simulated_io_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+if(ETHERCAT_AVAILABLE)
+    target_compile_definitions(simulated_io_demo PRIVATE ETHERCAT_AVAILABLE)
+    target_include_directories(simulated_io_demo PRIVATE ${ETHERCAT_INCLUDE_DIR})
+endif()
+if(LIBGPIOD_FOUND)
+    target_compile_definitions(simulated_io_demo PRIVATE GPIO_LIBGPIOD_AVAILABLE)
+    if(LIBGPIOD_INCLUDE_DIR)
+        target_include_directories(simulated_io_demo PRIVATE ${LIBGPIOD_INCLUDE_DIR})
+    endif()
+endif()
 
 install(TARGETS dh-discover
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
