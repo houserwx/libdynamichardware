@@ -34,7 +34,8 @@ GPIOAdapter::GPIOAdapter(BoardVariant variant, std::string chipPath)
 }
 
 // ---------------------------------------------------------------------------
-// Initialize — open chip, discover lines, create PDOs, populate catalog
+// Initialize — open chip, discover available lines (catalog), activate
+// registered lines only (PDO + hardware handles).
 // ---------------------------------------------------------------------------
 bool GPIOAdapter::initialize()
 {
@@ -69,18 +70,45 @@ bool GPIOAdapter::initialize()
     stubMode_ = true;
 #endif
 
-    // Discover GPIO lines — auto-populate all available lines in the catalog
+    // Phase 1: Discovery — populate catalog with ALL available lines.
+    // This is catalog-only; no PDOEntry or hardware handles are created.
     discoverLines();
 
+    // Discovery complete. Activation of registered lines is deferred until freeze.
+    std::printf("[GPIOAdapter] Initialized: %u available pins discovered in catalog (%s)\n",
+                availableLineCount_,
+                stubMode_ ? "stub mode" : "libgpiod");
+
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Deferred activation — request hardware handles and build PDOs for
+// only the lines that have been explicitly registered via registerLine().
+// Called during BUILT→FROZEN transition before adapter enters registry.
+// ---------------------------------------------------------------------------
+void GPIOAdapter::deferredActivate()
+{
+    if (activated_) {
+        std::fprintf(stderr, "[GPIOAdapter] Already activated — skipping\n");
+        return;
+    }
+
+    if (lines_.empty()) {
+        std::printf("[GPIOAdapter] No registered lines to activate\n");
+        activated_ = true;
+        return;
+    }
+
+    // Request hardware handles for each registered line
     if (stubMode_) {
-        // Initialize stub states for discovered lines
         stubStates_.resize(lines_.size());
         for (size_t i = 0; i < lines_.size(); ++i) {
             stubStates_[i].value = lines_[i].initialVal;
             stubStates_[i].toggleCycle = 0;
         }
     } else {
-        // Request each discovered line from the GPIO chip
+        handles_.resize(lines_.size());
         for (size_t i = 0; i < lines_.size(); ++i) {
             if (!requestLine(lines_[i], i)) {
                 std::fprintf(stderr, "[GPIOAdapter] Cannot request line %u (%s) — will skip\n",
@@ -89,7 +117,7 @@ bool GPIOAdapter::initialize()
         }
     }
 
-    // Create PDOs for GPIO lines (single PDO with all lines)
+    // Build PDO from registered lines only
     {
         dynamichardware::pdo::PDO pdo;
         for (auto& line : lines_) {
@@ -99,34 +127,24 @@ bool GPIOAdapter::initialize()
         }
 
         if (!pdo.entries.empty()) {
-            // Allocate image buffer (1 byte per entry for digital I/O)
             pdo.image.resize(pdo.entries.size());
-
-            // Set image pointers into each entry
             for (size_t i = 0; i < pdo.entries.size(); ++i) {
                 pdo.entries[i].image = pdo.image.data() + i;
             }
-
             pdos_.push_back(std::move(pdo));
         }
     }
 
-    if (variant_ != BoardVariant::UNKNOWN) {
-        std::printf("[GPIOAdapter] %s — %zu lines (%s)\n",
-                    boardVariantName(variant_).c_str(),
-                    lines_.size(),
-                    stubMode_ ? "stub mode" : "libgpiod");
-    } else {
-        std::printf("[GPIOAdapter] Unknown board — %zu lines (%s)\n",
-                    lines_.size(),
-                    stubMode_ ? "stub mode" : "libgpiod");
-    }
-
-    return true;
+    activated_ = true;
+    std::printf("[GPIOAdapter] Activated: %zu registered lines in RT cycle\n", lines_.size());
 }
 
 // ---------------------------------------------------------------------------
-// discoverLines() — scan GPIO chip, skip kernel-claimed lines, populate catalog
+// discoverLines() — scan GPIO chip, skip kernel-claimed lines, populate catalog ONLY.
+//
+// Responsibility: catalog population (available pins reference).
+// Does NOT create PDOEntry objects, does NOT modify lines_, does NOT request
+// hardware handles.  Activation happens via registerLine() + initialize().
 // ---------------------------------------------------------------------------
 void GPIOAdapter::discoverLines()
 {
@@ -142,11 +160,8 @@ void GPIOAdapter::discoverLines()
     std::printf("[GPIOAdapter] Scanning %u GPIO lines on %s\n",
                 total_lines, chipPath_.c_str());
 
-    // Reserve handles upfront (worst case: all lines are free)
-    handles_.resize(total_lines);
-
     uint32_t claimed = 0;
-    uint32_t registered = 0;
+    uint32_t available = 0;
 
     // Discover each line — skip kernel-claimed lines (I2C, SPI, etc.)
     for (uint32_t i = 0; i < total_lines; ++i) {
@@ -168,41 +183,29 @@ void GPIOAdapter::discoverLines()
         }
 #endif
 
-        GPIOLine line;
-        line.offset = i;
-        line.direction = LineDirection::INPUT;
+        // Build catalog entry for this available line
+        std::string uuid = "GPIO|" + std::to_string(i);
 
-        // Create human-readable name
-        char name_buf[64];
-        std::snprintf(name_buf, sizeof(name_buf), "GPIO%u", i);
-        line.name = name_buf;
-
-        // Create PDO entry for this line
-        dynamichardware::pdo::PDOEntry entry;
-        entry.type = dynamichardware::pdo::EntryType::BoolInput;
-        entry.uuid = "GPIO|" + std::to_string(i);
-        line.entry = &entry;
-
-        lines_.push_back(std::move(line));
-        registered++;
-
-        // Register in hardware catalog
         if (catalog_) {
             dynamichardware::pdo::CatalogEntry catEntry;
             catEntry.key = "GPIO|00|" + std::to_string(i);
-            catEntry.uuid = entry.uuid;
-            catEntry.channelType = "DigitalInput";
-            catEntry.name = "GPIO" + std::to_string(i);
+            catEntry.uuid = uuid;
+            // Pure discovery: direction is unknown until consumer assigns it via registerLine().
+            // Mark as bidirectional so the catalog entry exists regardless of eventual use.
+            catEntry.channelType = "DigitalIO";
             catEntry.slaveName = variant_ == BoardVariant::RASPBERRY_PI_5 ? "BCM2712" :
                                  variant_ == BoardVariant::RASPBERRY_PI_4 ? "BCM2711" : "GPIO";
             catEntry.slavePos = 0;
             catEntry.isOutput = false;
             catalog_->addEntry(std::move(catEntry));
         }
+
+        available++;
     }
 
-    std::printf("[GPIOAdapter] Registered %zu available lines (%u skipped by kernel drivers)\n",
-                registered, claimed);
+    availableLineCount_ = available;
+    std::printf("[GPIOAdapter] Discovered %u available lines in catalog (%u skipped by kernel drivers)\n",
+                available, claimed);
 }
 
 // ---------------------------------------------------------------------------

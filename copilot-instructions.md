@@ -3,7 +3,11 @@
 **Purpose:** This document instructs Copilot agents on the architectural principles, coding patterns, and RT determinism requirements for the EtherCatDrone project. Read this before making any changes to source code.
 
 ---
-
+## 0.1 Core Tenants
+1. **RT Determinism is Paramount** — The RT hot path must be free of heap allocation, virtual calls, blocking syscalls, and shared
+memory without proper buffering. This is non-negotiable.
+2. **Discovery-First Architecture** — Backends discover all available hardware and populate a central catalog. Consumers select from the catalog to define the active set of PDOs.
+3. **KEEP IT SIMPLE** — Do not overcomplicate architecture.  Respect SOLID principles, but avoid unnecessary abstractions. Favor composition over inheritance, and direct access over indirection.
 ## 1.0 RT Determinism — Non-Negotiable Rules
 
 The RT hot path (from `Application::run()` through `rtCycle()`, `readAll()`, `writeAll()`, and any `tick()` method) must satisfy these criteria:

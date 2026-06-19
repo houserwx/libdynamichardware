@@ -15,11 +15,11 @@ void HardwareRegistry::addBackend(std::unique_ptr<IHardwareAdapter> adapter)
 void HardwareRegistry::buildUuidMap()
 {
     uuidMap_.clear();
-    for (auto& backend : backends_) {
-        for (auto& pdo : backend->getPDOs()) {
-            for (auto& e : pdo.entries) {
+    for (const auto& backend : backends_) {
+        for (const auto& pdo : backend->getPDOs()) {
+            for (const auto& e : pdo.entries) {
                 if (!e.uuid.empty()) {
-                    uuidMap_.emplace(e.uuid, &e);
+                    uuidMap_.emplace(e.uuid, const_cast<PDOEntry*>(&e));
                 }
             }
         }
@@ -36,7 +36,7 @@ void HardwareRegistry::freezeForRt()
 
     std::size_t totalEntries = 0;
     for (auto& backend : backends_) {
-        for (auto& pdo : backend->getPDOs()) {
+        for (auto& pdo : backend->pdos_) {
             // Freeze this PDO: shrink storage and re-base image pointers.
             pdo.freeze();
             totalEntries += pdo.entries.size();
@@ -49,6 +49,8 @@ void HardwareRegistry::freezeForRt()
 }
 
 // ---- RT cycle -------------------------------------------------------
+// Registry is friend of IHardwareAdapter so it can iterate mutable pdos_
+// during freeze and RT sweeps.
 
 void HardwareRegistry::readAll() noexcept
 {
@@ -60,7 +62,7 @@ void HardwareRegistry::readAll() noexcept
         // Phase 2: concrete read sweep — latch value from image into entry cache
         // No virtual calls — PDOEntry::read() is a concrete struct method.
         // Reads all input entry types: DI, Encoder, AI, IMU, GPS, Magnetometer, Barometer.
-        for (auto& pdo : backend->getPDOs()) {
+        for (auto& pdo : backend->pdos_) {
             for (auto& e : pdo.entries) {
                 if (isInputEntryType(e.type)) {
                     e.read();
@@ -76,7 +78,7 @@ void HardwareRegistry::writeAll() noexcept
         // Phase 3: concrete write sweep — flush pulse/desired state into image
         // No virtual calls — PDOEntry::write() is a concrete struct method.
         // Writes all output entry types: DO, AO.
-        for (auto& pdo : backend->getPDOs()) {
+        for (auto& pdo : backend->pdos_) {
             for (auto& e : pdo.entries) {
                 if (isOutputEntryType(e.type)) {
                     e.write();

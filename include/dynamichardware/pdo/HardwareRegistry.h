@@ -79,27 +79,18 @@ private:
     // isInputEntryType  → entry should be read during readAll().
     // isOutputEntryType → entry should be written during writeAll().
     // Message types are handled exclusively by adapter hooks (not swept).
+    /// Classify by bitmask — future-proof against new EntryType additions.
+    /// Direction lives in bits [1-0] (DIR_INPUT=0x01, DIR_OUTPUT=0x02).
     [[nodiscard]] static bool isInputEntryType(EntryType t) noexcept {
-        switch (t) {
-            case EntryType::BoolInput:
-            case EntryType::Int32Input:
-            case EntryType::Int16Input:
-            case EntryType::FloatInput:
-                return true;
-            default:
-                return false;
-        }
+        uint8_t dir = static_cast<uint8_t>(t) & 0x03; // Extract direction bits
+        return dir == DIR_INPUT &&
+               ((static_cast<uint8_t>(t) & BASE_MSG) != BASE_MSG); // Exclude message types
     }
 
     [[nodiscard]] static bool isOutputEntryType(EntryType t) noexcept {
-        switch (t) {
-            case EntryType::BoolOutput:
-            case EntryType::Int16Output:
-            case EntryType::FloatOutput:
-                return true;
-            default:
-                return false;
-        }
+        uint8_t dir = static_cast<uint8_t>(t) & 0x03; // Extract direction bits
+        return dir == DIR_OUTPUT &&
+               ((static_cast<uint8_t>(t) & BASE_MSG) != BASE_MSG); // Exclude message types
     }
 
     std::vector<std::unique_ptr<IHardwareAdapter>> backends_;

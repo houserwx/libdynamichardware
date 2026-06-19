@@ -27,17 +27,17 @@ struct DynamicHardwareContext::Impl {
     // Name → UUID mapping (built from catalog)
     std::unordered_map<std::string, std::string> nameToUuid;
 
-    // Adapter handles (for conditional init)
+    // Owning adapter handles — moved into registry during build()
     std::unique_ptr<ethercat::EthercatAdapter>  ethercatAdapter;
     std::unique_ptr<gpio::GPIOAdapter>          gpioAdapter;
     std::unique_ptr<i2c::I2CAdapter>            i2cAdapter;
     std::unique_ptr<spi::SPIAdapter>            spiAdapter;
     std::unique_ptr<simulated::SimulatedAdapter> simAdapter;
-};
 
-// ============================================================================
-// SimulatedDefinitionBuilder
-// ============================================================================
+    // Raw pointer to GPIO adapter for post-move access (deferredActivate on freeze)
+    // Survives unique_ptr move into registry.
+    gpio::GPIOAdapter* gpioPtr{nullptr};
+};
 SimulatedDefinitionBuilder SimulatedDefinitionBuilder::create()
 {
     return SimulatedDefinitionBuilder{};
@@ -331,6 +331,8 @@ bool DynamicHardwareContext::build()
             std::printf("[Context] Initializing GPIO backend (%s)...\n",
                         gpio::boardVariantName(variant).c_str());
             if (impl_->gpioAdapter->initialize()) {
+                // Save raw pointer before moving unique_ptr into registry
+                impl_->gpioPtr = impl_->gpioAdapter.get();
                 impl_->registry.addBackend(std::move(impl_->gpioAdapter));
                 catalogChanged = true;
             } else {
@@ -390,6 +392,12 @@ bool DynamicHardwareContext::build()
 bool DynamicHardwareContext::freeze()
 {
     if (state_ != State::BUILT) return false;
+
+    // Activate GPIO hardware handles for registered lines only.
+    // Must happen before registry freeze so PDOs are built with real data.
+    if (impl_->gpioPtr && !impl_->gpioPtr->isActivated()) {
+        impl_->gpioPtr->deferredActivate();
+    }
 
     impl_->registry.freezeForRt();
     state_ = State::FROZEN;

@@ -171,7 +171,10 @@ bool SimulatedAdapter::initialize()
         simStates_.push_back(std::move(sim));
     }
 
-    pdos_[0].freeze();
+    // NOTE: Do NOT call pdos_[0].freeze() here.
+    // Freeze is orchestrated by HardwareRegistry::freezeForRt() so all backends
+    // freeze uniformly under lifecycle control. Premature self-freeze can cause
+    // inconsistent state if other adapters are still being configured.
     std::printf("[SimulatedAdapter] Built PDO with %zu simulated entries\n", simStates_.size());
     return true;
 }

@@ -27,15 +27,9 @@
 #include "dynamichardware/pdo/HardwareRegistry.h"
 #include "dynamichardware/pdo/HardwareCatalog.h"
 
-#include <memory>
-#include <optional>
-#include <string>
-#include <vector>
-#include <cstdint>
-
 namespace dynamichardware {
 
-// Forward declaration (shared_ptr handles incomplete types)
+// Forward declarations for shared_ptr / builder return types
 class DynamicHardwareContext;
 
 // ---------------------------------------------------------------------------
@@ -151,6 +145,7 @@ private:
         uint32_t ethercatCycleNs{1'000'000u};
 
         bool enableGPIO{false};
+
         bool enableI2C{false};
         std::string i2cBusPath{"/dev/i2c-1"};
 
