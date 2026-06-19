@@ -1,6 +1,7 @@
 #pragma once
 #include "dynamichardware/backends/gpio/BoardVariant.h"
-#include "dynamichardware/pdo/IHardwareAdapter.h"
+#include "dynamichardware/pdo/IDiscoveryBackend.h"
+#include "dynamichardware/pdo/IRTBackend.h"
 #include "dynamichardware/pdo/HardwareCatalog.h"
 
 #include <string>
@@ -10,35 +11,34 @@
 // ============================================================================
 // GPIOAdapter — GPIO backend adapter for the PDO system.
 //
-// Implements IHardwareAdapter so GPIO lines appear as regular PDO entries
-// to the RT cycle.  Supports both input (digital reads) and output (digital
-// writes) lines, with optional debounce for inputs and PWM for outputs.
+// Implements both IDiscoveryBackend and IRTBackend so GPIO lines appear as 
+// regular PDO entries to the RT cycle.  Supports both input (digital reads) 
+// and output (digital writes) lines, with optional debounce for inputs and 
+// PWM for outputs.
 //
 // Raspberry Pi support:
 //   - Pi 4 (BCM2711): gpiochip0, 54 lines, libgpiod v1/v2
 //   - Pi 5 (BCM2712): gpiochip0, 54 lines, libgpiod v2
 //   - Auto-detection via /proc/device-tree/model or compatible
 //
-// Two-phase lifecycle:
+// Two-phase lifecycle (ISP split):
 //
-// Phase 1 — Discovery (build time):
+// DISCOVERY PHASE (IDiscoveryBackend — transient, discarded after build):
 //   1. Construct with chip path (auto-detected if empty).
-//   2. Call initialize() — opens gpiochip, discovers available pins,
-//      populates hardware catalog only (no PDOEntry or handle creation).
+//   2. Call discover() — opens gpiochip, scans available pins, populates 
+//      hardware catalog only (no PDOEntry or handle creation).
+//   3. Discovery interface can be destroyed — no state survives into freeze.
 //
-// Phase 2 — Activation (between build and freeze):
-//   3. Application inspects catalog to find desired pins by UUID.
-//   4. App calls registerLine(offset, direction, name, type) for
-//      each pin it wants to actively read/write.
-//
-// Phase 3 — Freeze (freeze time):
-//   5. deferredActivate() — requests libgpiod handles ONLY for registered
-//      lines; builds PDO structure from registered GPIOLine entries;
+// SETUP + ACTIVATION (IRTBackend — survives through frozen mode):
+//   4. Application inspects catalog to find desired pins by UUID.
+//   5. App calls registerLine(offset, direction, name, type) for each pin.
+//   6. deferredActivate()/buildRT() — requests libgpiod handles ONLY for 
+//      registered lines; builds PDO structure from GPIOLine entries; 
 //      allocates process-image buffers.
 //
-// Phase 4 — RT Cycle:
-//   6. onBeforeReadInputs() reads ONLY registered/input lines into PDO image.
-//   7. onAfterWriteOutputs() writes ONLY registered/output lines from PDO image.
+// RT CYCLE:
+//   7. onBeforeReadInputs() reads ONLY registered/input lines into PDO image.
+//   8. onAfterWriteOutputs() writes ONLY registered/output lines from PDO image.
 //
 // Phase 1: libgpiod-based implementation with real hardware access.
 // Falls back to stub mode if libgpiod or /dev/gpiochip* is unavailable.
@@ -72,7 +72,11 @@ struct GPIOLine {
     dynamichardware::pdo::PDOEntry* entry{nullptr};
 };
 
-class GPIOAdapter final : public dynamichardware::pdo::IHardwareAdapter {
+// Inherits both discovery (transient) and RT lifecycle (persistent) interfaces.
+// Discovery phase can be discarded after build(); RT interface survives through freeze.
+class GPIOAdapter final
+    : public dynamichardware::pdo::IDiscoveryBackend,
+      public dynamichardware::pdo::IRTBackend {
 public:
     /// Construct with auto-detected board variant and chip path.
     GPIOAdapter();
@@ -82,7 +86,12 @@ public:
 
     ~GPIOAdapter() override = default;
 
-    bool initialize() override;
+    // --- IDiscoveryBackend implementation -----------------------------------
+    [[nodiscard]] bool discover() override;
+
+    // --- IRTBackend implementation ------------------------------------------
+    [[nodiscard]] bool buildRT() override;
+    void activate() override { deferredActivate(); }
     void onBeforeReadInputs()  noexcept override;
     void onAfterWriteOutputs() noexcept override;
 

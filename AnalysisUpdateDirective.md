@@ -18,7 +18,7 @@ Update the analysis after any commit that does one or more of the following:
 - Adds, removes, or restructures a source/header in `src/` or `include/`
 - Changes the RT cycle path in `HardwareRegistry.cpp` (`readAll`/`writeAll`)
 - Changes `PDO.cpp` (`PDOEntry::read`/`write`, `PDO::freeze`)
-- Modifies `IHardwareAdapter` interface or any concrete adapter
+- Modifies `IDiscoveryBackend`, `IRTBackend`, or any concrete backend
 - Changes `DynamicHardwareContext` facade (lifecycle, builder, public methods)
 - Changes `PDOFactory` or `HardwareCatalog` (entry creation, UUID management)
 - Changes RT utilities (`SignalProcess.h`, `VectorBuffer.h`)
@@ -38,7 +38,7 @@ or build/CI script changes unless they reveal a design issue.
 | **PDO** | `PDO.h/.cpp`, `PDOFactory.h/.cpp` | `PDOEntry` — concrete struct, no vtable. Typed accessors (`getBool/setBool`, `getCount`, `getRawAdc/setRawAdc`, IMU/GPS/float). `PDO` — owns image buffer + entry vector. `PDOFactory` — static factory for PDOEntry creation from catalog entries. |
 | **Registry** | `HardwareRegistry.h/.cpp` | Owns backend vector, orchestrates RT cycle (`readAll`/`writeAll` with entry type filtering), UUID→PDOEntry* lookup map, `freezeForRt` coordinator. |
 | **Catalog** | `HardwareCatalog.h/.cpp` | Backend-agnostic channel metadata. Stable UUIDs, JSON persistence (`load`/`save`), discovery metadata (key format supports EC/I2C/SPI/GPIO/GRPC). |
-| **Adapters** | `backends/{ethercat,gpio,i2c,spi,simulated}/` | `IHardwareAdapter` — abstract interface. Concrete backends implement `initialize()`, `onBeforeReadInputs()`, `onAfterWriteOutputs()`. Only 2 virtual calls per backend per cycle. |
+| **Backends** | `backends/{ethercat,gpio,i2c,spi,simulated}/` | Dual-interface: `IDiscoveryBackend` (transient catalog population) + `IRTBackend` (persistent RT lifecycle). Concrete adapters inherit both via multiple inheritance and implement `discover()` → one-shot scan during build phase, then `buildRT()` → PDO construction/handle activation before freeze. Only 2 virtual calls per backend per cycle (`onBeforeReadInputs` / `onAfterWriteOutputs`). |
 | **RT Utils** | `rt/SignalProcess.h`, `rt/VectorBuffer.h` | `signalProcessTickNow` — cached CLOCK_MONOTONIC timestamp. `PulseMachine`, `DebounceMachine` — one-shot pulse and debouncing state machines. `VectorBuffer` — lock-free SPSC ring buffer for cross-thread comms. |
 
 ---
@@ -87,8 +87,8 @@ Concern (< 7): Class owns both policy and mechanism at same layer.
 #### O — Open/Closed
 
 New backend, channel type, or entry type should be **additive only**:
-- New `IHardwareAdapter` subclass → no changes needed to existing code
-- New `EntryType` enum value → may require updating type filter in `readAll`/`writeAll` (document as known trade-off)
+- New backend inheriting both `IDiscoveryBackend` + `IRTBackend` → no changes needed to existing code
+- New `EntryType` enum value → may require updating bitmask filter in `readAll`/`writeAll` (document as known trade-off)
 - New catalog key format → handled by string-based key system
 
 Excellent: New feature = new file or enum case only.
@@ -96,15 +96,17 @@ Concern: New feature requires editing existing switch/type-filter code.
 
 #### L — Liskov Substitution
 
-All `IHardwareAdapter` subclasses must be drop-in substitutable:
-- No subclass throws where base promises `noexcept`
-- No subclass has stronger preconditions than base
-- `initialize()` returning false is the expected failure path (not exception)
+All backends implementing `IDiscoveryBackend` + `IRTBackend` must be drop-in substitutable:
+- No backend throws where interface promises `noexcept`
+- No backend has stronger preconditions than base interfaces
+- `discover()` / `buildRT()` returning false is the expected failure path (not exception)
 
-#### I — Interface Segregation
+#### I — Interface Segregation (✓ Fixed in 2025)
 
-No consumer forced to depend on unused methods:
-- `IHardwareAdapter` has minimal surface: `initialize`, `onBeforeReadInputs`, `onAfterWriteOutputs`, `getPDOs`
+Discovery and RT lifecycle now split across two interfaces:
+- `IDiscoveryBackend`: transient catalog population only (`setCatalog`, `discover`) — discarded after build phase 1
+- `IRTBackend`: persistent RT lifecycle only (`buildRT`, `activate`, `onBeforeReadInputs`, `onAfterWriteOutputs`) — survives through freeze
+- This fix resolves the original ISP violation where a single interface served both one-shot discovery and long-lived RT operation
 - `PDOEntry` exposes all typed accessors regardless of `EntryType` (minor — type field is truth; consumer checks type)
 - Facade does not expose internal layers (`registry()`/`catalog()` are private)
 
@@ -113,7 +115,7 @@ No consumer forced to depend on unused methods:
 High-level code depends on abstractions, not concrete types:
 - `DynamicHardwareContext.h` should only include `PDO.h`, `HardwareRegistry.h`, `HardwareCatalog.h` (no backend-specific headers)
 - `HardwareRegistry.h` should not include `EthercatAdapter.h`
-- `IHardwareAdapter.h` should not include any concrete backend
+- Neither `IDiscoveryBackend.h` nor `IRTBackend.h` should include any concrete backend
 - Consumer application code should only `#include "dynamichardware/DynamicHardwareContext.h"`
 
 ---
@@ -128,7 +130,7 @@ High-level code depends on abstractions, not concrete types:
    3b. PDO Layer (PDOEntry, PDO, PDOFactory)
    3c. Registry Layer (HardwareRegistry)
    3d. Catalog Layer (HardwareCatalog)
-   3e. Adapter Layer (IHardwareAdapter + ethercat/gpio/i2c/spi/simulated)
+   3e. Backend Layer (IDiscoveryBackend + IRTBackend interfaces, plus ethercat/gpio/i2c/spi/simulated backends)
    3f. RT Utilities (SignalProcess, VectorBuffer)
 4. RT Hot-Path Profile (call graph from readAll→writeAll, virtual call count,
    allocations per cycle, syscalls per cycle)
@@ -154,12 +156,13 @@ grep -rn "new \|make_unique\|make_shared\|push_back\|resize\|emplace_back" \
 grep -n "void\|bool\|int\|float" \
      include/dynamichardware/pdo/PDO.h \
      include/dynamichardware/pdo/HardwareRegistry.h \
-     include/dynamichardware/backends/*/IHardwareAdapter.h \
+     include/dynamichardware/pdo/IRTBackend.h \
      | grep -v noexcept
 
-# 3. Virtual calls in RT sweep
+# 3. Virtual calls in RT sweep (check both interfaces)
 grep -rn "virtual\|override" \
-     include/dynamichardware/pdo/IHardwareAdapter.h \
+     include/dynamichardware/pdo/IDiscoveryBackend.h \
+     include/dynamichardware/pdo/IRTBackend.h \
      include/dynamichardware/backends/*/
 
 # 4. unordered_map in RT files (acceptable for UUID lookup; flag if in per-entry loop)

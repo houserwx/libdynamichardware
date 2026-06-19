@@ -310,16 +310,20 @@ bool DynamicHardwareContext::build()
         }
     }
 
-    // Initialize adapters and add to registry
+    // ==================================================================
+    // Phase 1 — Discovery: populate catalog from each enabled backend.
+    // Backends scan hardware and register entries into the shared catalog.
+    // After this phase, consumers can inspect catalog + register lines.
+    // ==================================================================
     bool catalogChanged = false;
 
     if (impl_->ethercatAdapter) {
-        std::printf("[Context] Initializing EtherCAT backend...\n");
-        if (impl_->ethercatAdapter->initialize()) {
-            impl_->registry.addBackend(std::move(impl_->ethercatAdapter));
-            catalogChanged = true;
+        std::printf("[Context] Discovering EtherCAT devices...\n");
+        if (!impl_->ethercatAdapter->discover()) {
+            std::printf("[Context] EtherCAT discovery failed (no hardware or stub mode)\n");
+            impl_->ethercatAdapter.reset();
         } else {
-            std::printf("[Context] EtherCAT initialization failed (no hardware or stub mode)\n");
+            catalogChanged = true;
         }
     }
 
@@ -328,52 +332,105 @@ bool DynamicHardwareContext::build()
         if (variant == gpio::BoardVariant::UNKNOWN) {
             std::printf("[Context] Skipping GPIO backend — not a recognized embedded platform\n");
         } else {
-            std::printf("[Context] Initializing GPIO backend (%s)...\n",
+            std::printf("[Context] Discovering GPIO lines (%s)...\n",
                         gpio::boardVariantName(variant).c_str());
-            if (impl_->gpioAdapter->initialize()) {
-                // Save raw pointer before moving unique_ptr into registry
-                impl_->gpioPtr = impl_->gpioAdapter.get();
-                impl_->registry.addBackend(std::move(impl_->gpioAdapter));
-                catalogChanged = true;
+            if (!impl_->gpioAdapter->discover()) {
+                std::printf("[Context] GPIO discovery failed\n");
+                impl_->gpioAdapter.reset();
             } else {
-                std::printf("[Context] GPIO initialization failed\n");
+                catalogChanged = true;
             }
         }
     }
 
     if (impl_->i2cAdapter) {
-        std::printf("[Context] Initializing I2C backend...\n");
-        if (impl_->i2cAdapter->initialize()) {
-            impl_->registry.addBackend(std::move(impl_->i2cAdapter));
-            catalogChanged = true;
+        std::printf("[Context] Discovering I2C devices...\n");
+        if (!impl_->i2cAdapter->discover()) {
+            std::printf("[Context] I2C discovery failed\n");
+            impl_->i2cAdapter.reset();
         } else {
-            std::printf("[Context] I2C initialization failed\n");
+            catalogChanged = true;
         }
     }
 
     if (impl_->spiAdapter) {
-        std::printf("[Context] Initializing SPI backend...\n");
-        if (impl_->spiAdapter->initialize()) {
-            impl_->registry.addBackend(std::move(impl_->spiAdapter));
-            catalogChanged = true;
+        std::printf("[Context] Discovering SPI devices...\n");
+        if (!impl_->spiAdapter->discover()) {
+            std::printf("[Context] SPI discovery failed\n");
+            impl_->spiAdapter.reset();
         } else {
-            std::printf("[Context] SPI initialization failed\n");
+            catalogChanged = true;
         }
     }
 
     if (impl_->simAdapter) {
-        std::printf("[Context] Initializing Simulated backend...\n");
-        if (impl_->simAdapter->initialize()) {
-            impl_->registry.addBackend(std::move(impl_->simAdapter));
-            catalogChanged = true;
+        std::printf("[Context] Discovering Simulated entries...\n");
+        if (!impl_->simAdapter->discover()) {
+            std::printf("[Context] Simulated discovery failed\n");
+            impl_->simAdapter.reset();
         } else {
-            std::printf("[Context] Simulated initialization failed\n");
+            catalogChanged = true;
         }
     }
 
-    // Save catalog if it changed
+    // Save catalog after discovery phase
     if (catalogChanged) {
         catalog.save(builderState_.catalogPath);
+    }
+
+    // ==================================================================
+    // Phase 2 — RT Setup: build PDO structures and activate backends.
+    // Backends that succeed are moved into the HardwareRegistry for RT.
+    // ==================================================================
+    if (impl_->ethercatAdapter) {
+        std::printf("[Context] Building EtherCAT backend...\n");
+        if (impl_->ethercatAdapter->buildRT()) {
+            impl_->registry.addBackend(std::move(impl_->ethercatAdapter));
+        } else {
+            std::printf("[Context] EtherCAT RT setup failed (no hardware or stub mode)\n");
+        }
+    }
+
+    if (impl_->gpioAdapter) {
+        auto variant = impl_->gpioAdapter->boardVariant();
+        if (variant != gpio::BoardVariant::UNKNOWN) {
+            std::printf("[Context] Building GPIO backend (%s)...\n",
+                        gpio::boardVariantName(variant).c_str());
+            if (impl_->gpioAdapter->buildRT()) {
+                // Save raw pointer before moving unique_ptr into registry
+                impl_->gpioPtr = impl_->gpioAdapter.get();
+                impl_->registry.addBackend(std::move(impl_->gpioAdapter));
+            } else {
+                std::printf("[Context] GPIO RT setup failed\n");
+            }
+        }
+    }
+
+    if (impl_->i2cAdapter) {
+        std::printf("[Context] Building I2C backend...\n");
+        if (impl_->i2cAdapter->buildRT()) {
+            impl_->registry.addBackend(std::move(impl_->i2cAdapter));
+        } else {
+            std::printf("[Context] I2C RT setup failed\n");
+        }
+    }
+
+    if (impl_->spiAdapter) {
+        std::printf("[Context] Building SPI backend...\n");
+        if (impl_->spiAdapter->buildRT()) {
+            impl_->registry.addBackend(std::move(impl_->spiAdapter));
+        } else {
+            std::printf("[Context] SPI RT setup failed\n");
+        }
+    }
+
+    if (impl_->simAdapter) {
+        std::printf("[Context] Building Simulated backend...\n");
+        if (impl_->simAdapter->buildRT()) {
+            impl_->registry.addBackend(std::move(impl_->simAdapter));
+        } else {
+            std::printf("[Context] Simulated RT setup failed\n");
+        }
     }
 
     // Build name → UUID mapping from catalog
@@ -393,11 +450,9 @@ bool DynamicHardwareContext::freeze()
 {
     if (state_ != State::BUILT) return false;
 
-    // Activate GPIO hardware handles for registered lines only.
-    // Must happen before registry freeze so PDOs are built with real data.
-    if (impl_->gpioPtr && !impl_->gpioPtr->isActivated()) {
-        impl_->gpioPtr->deferredActivate();
-    }
+    // GPIO activation now happens inline during buildRT() in phase 2 of build().
+    // The activate() wrapper on GPIOAdapter calls deferredActivate() which is a no-op
+    // once buildRT has already been called, so we just skip this legacy path entirely.
 
     impl_->registry.freezeForRt();
     state_ = State::FROZEN;

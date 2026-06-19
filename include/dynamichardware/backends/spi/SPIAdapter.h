@@ -1,5 +1,6 @@
 #pragma once
-#include "dynamichardware/pdo/IHardwareAdapter.h"
+#include "dynamichardware/pdo/IDiscoveryBackend.h"
+#include "dynamichardware/pdo/IRTBackend.h"
 #include "dynamichardware/pdo/HardwareCatalog.h"
 
 #include <string>
@@ -9,15 +10,22 @@
 // ============================================================================
 // SPIAdapter — SPI backend adapter for the PDO system.
 //
-// Implements IHardwareAdapter so SPI sensors appear as regular PDO entries
-// to the RT cycle.  Each SPI device gets its own PDO with entries for each
-// sensor axis or channel.
+// Implements both IDiscoveryBackend and IRTBackend so SPI sensors appear as 
+// regular PDO entries to the RT cycle.  Each SPI device gets its own PDO with 
+// entries for each sensor axis or channel.
 //
-// Lifecycle:
-//   1. Construct with bus path and sensor catalog reference.
-//   2. Call registerDevice() for each SPI sensor (init time).
-//   3. Call initialize() — opens SPI bus, validates devices, creates PDOs.
-//   4. RT cycle: onBeforeReadInputs() reads all devices into PDO images.
+// Two-phase lifecycle (ISP split):
+//
+// DISCOVERY PHASE (IDiscoveryBackend — transient):
+//   1. Construct with bus path.
+//   2. App calls registerDevice() for desired sensors.
+//   3. discover() — validates bus access, populates catalog from registered devices.
+//   4. Discovery interface can be destroyed after consumer configuration phase.
+//
+// RT SETUP + CYCLE (IRTBackend — persistent through freeze):
+//   5. buildRT() — opens SPI bus handle, constructs PDO structure from devices.
+//   6. activate() — no-op (bus already opened during buildRT).
+//   7. onBeforeReadInputs()/onAfterWriteOutputs() — per-cycle read/write hooks.
 //
 // Phase 1: Stub implementation (returns zeros).  Real SPI communication
 // will be implemented when hardware is available.
@@ -34,13 +42,21 @@ struct SPIDevice {
     std::vector<dynamichardware::pdo::PDOEntry*> entries;
 };
 
-class SPIAdapter final : public dynamichardware::pdo::IHardwareAdapter {
+// Inherits both discovery (transient) and RT lifecycle (persistent) interfaces.
+class SPIAdapter final
+    : public dynamichardware::pdo::IDiscoveryBackend,
+      public dynamichardware::pdo::IRTBackend {
 public:
     SPIAdapter(std::string busPath);
-    void setCatalog(dynamichardware::pdo::HardwareCatalog* catalog) noexcept { catalog_ = catalog; }
+    // setCatalog inherited from IDiscoveryBackend.
     ~SPIAdapter() override = default;
 
-    bool initialize() override;
+    // --- IDiscoveryBackend implementation -----------------------------------
+    [[nodiscard]] bool discover() override;
+
+    // --- IRTBackend implementation ------------------------------------------
+    [[nodiscard]] bool buildRT() override;
+    // activate() uses default no-op from IRTBackend.
     void onBeforeReadInputs()  noexcept override;
     void onAfterWriteOutputs() noexcept override;
 
@@ -55,7 +71,9 @@ public:
 
 private:
     std::string busPath_;
-    dynamichardware::pdo::HardwareCatalog* catalog_{nullptr};
+    // catalog_ inherited from IDiscoveryBackend for discovery phase.
+    // Note: private members below store OS-level resources (fd, device array) that have
+    // no home in generic PDOEntry — necessary implementation detail behind abstract interface.
     int spiFd_{-1};
     std::vector<SPIDevice> devices_;
 

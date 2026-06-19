@@ -1,5 +1,6 @@
 #pragma once
-#include "dynamichardware/pdo/IHardwareAdapter.h"
+#include "dynamichardware/pdo/IDiscoveryBackend.h"
+#include "dynamichardware/pdo/IRTBackend.h"
 #include "dynamichardware/pdo/HardwareCatalog.h"
 #include <vector>
 #include <string>
@@ -8,7 +9,7 @@
 namespace dynamichardware::simulated {
 
 // ============================================================
-// SimulatedAdapter — virtual hardware adapter.
+// SimulatedAdapter — virtual hardware adapter for testing and simulation.
 //
 // Loads a JSON definitions file describing simulated channels,
 // registers them into the HardwareCatalog, builds PDO entries,
@@ -33,23 +34,35 @@ namespace dynamichardware::simulated {
 //   ]
 // }
 //
-// Usage:
+// Two-phase lifecycle (ISP split):
+//
+// DISCOVERY PHASE (IDiscoveryBackend — transient):
 //   1. adapter.setCatalog(&catalog)
-//   2. adapter.loadDefinitions("SimulatedAdapterDefinitions.json")
-//   3. adapter.initialize() — registers channels, builds PDO
-//   4. RT: onBeforeReadInputs() writes synthetic values
+//   2. adapter.loadDefinitions(json_path) — populates catalog from JSON defs
+//   3. discover() — validates catalog has simulated entries (trivial check)
+//
+// RT SETUP + CYCLE (IRTBackend — persistent through freeze):
+//   4. buildRT() — constructs PDO structure from simulated catalog entries.
+//   5. activate() — no-op (simulated backend needs no real activation).
+//   6. onBeforeReadInputs()/onAfterWriteOutputs() — generate synthetic values.
 // ============================================================
 
-class SimulatedAdapter final : public dynamichardware::pdo::IHardwareAdapter {
+class SimulatedAdapter final
+    : public dynamichardware::pdo::IDiscoveryBackend,
+      public dynamichardware::pdo::IRTBackend {
 public:
     SimulatedAdapter() = default;
+    // setCatalog inherited from IDiscoveryBackend.
     ~SimulatedAdapter() override = default;
 
-    bool initialize() override;
+    // --- IDiscoveryBackend implementation -----------------------------------
+    [[nodiscard]] bool discover() override;
+
+    // --- IRTBackend implementation ------------------------------------------
+    [[nodiscard]] bool buildRT() override;
+    // activate() uses default no-op from IRTBackend.
     void onBeforeReadInputs()  noexcept override;
     void onAfterWriteOutputs() noexcept override;
-
-    void setCatalog(dynamichardware::pdo::HardwareCatalog* catalog) noexcept { catalog_ = catalog; }
 
     /// Load simulated channel definitions from a JSON file.
     /// Registers entries into the attached HardwareCatalog.
@@ -61,7 +74,7 @@ public:
     [[nodiscard]] std::size_t channelCount() const noexcept { return simStates_.size(); }
 
 private:
-    dynamichardware::pdo::HardwareCatalog* catalog_{nullptr};
+    // catalog_ inherited from IDiscoveryBackend for discovery phase.
     uint32_t                  cycleNs_{500'000};
     double                    cycleNsD_{500'000.0};
 

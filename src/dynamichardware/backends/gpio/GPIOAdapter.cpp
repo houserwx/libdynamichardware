@@ -34,10 +34,11 @@ GPIOAdapter::GPIOAdapter(BoardVariant variant, std::string chipPath)
 }
 
 // ---------------------------------------------------------------------------
-// Initialize — open chip, discover available lines (catalog), activate
-// registered lines only (PDO + hardware handles).
+// IDiscoveryBackend::discover() — transient discovery phase.
+// Opens chip, scans available lines into catalog (pure population).
+// This object can be destroyed after consumer configuration completes.
 // ---------------------------------------------------------------------------
-bool GPIOAdapter::initialize()
+bool GPIOAdapter::discover()
 {
     // Detect board variant if still unknown
     if (variant_ == BoardVariant::UNKNOWN) {
@@ -58,8 +59,8 @@ bool GPIOAdapter::initialize()
         return false;
     }
 
-  #if HAS_LIBGPIOD
-    // Try to open real GPIO chip
+#if HAS_LIBGPIOD
+    // Try to open real GPIO chip for scanning (handles stay open through RT lifecycle)
     if (!openChip()) {
         std::fprintf(stderr, "[GPIOAdapter] Cannot open %s — falling back to stub mode\n",
                      chipPath_.c_str());
@@ -70,12 +71,11 @@ bool GPIOAdapter::initialize()
     stubMode_ = true;
 #endif
 
-    // Phase 1: Discovery — populate catalog with ALL available lines.
-    // This is catalog-only; no PDOEntry or hardware handles are created.
+    // Discovery: populate catalog with ALL available lines.
+    // This is catalog-only; no PDOEntry or hardware handles are created here.
     discoverLines();
 
-    // Discovery complete. Activation of registered lines is deferred until freeze.
-    std::printf("[GPIOAdapter] Initialized: %u available pins discovered in catalog (%s)\n",
+    std::printf("[GPIOAdapter] Discovered: %u available pins in catalog (%s)\n",
                 availableLineCount_,
                 stubMode_ ? "stub mode" : "libgpiod");
 
@@ -83,21 +83,21 @@ bool GPIOAdapter::initialize()
 }
 
 // ---------------------------------------------------------------------------
-// Deferred activation — request hardware handles and build PDOs for
-// only the lines that have been explicitly registered via registerLine().
-// Called during BUILT→FROZEN transition before adapter enters registry.
+// IRTBackend::buildRT() — persistent RT setup phase.
+// Requests hardware handles for registered lines only and builds PDO structure.
+// Called after consumer configuration but before freeze().
 // ---------------------------------------------------------------------------
-void GPIOAdapter::deferredActivate()
+bool GPIOAdapter::buildRT()
 {
     if (activated_) {
-        std::fprintf(stderr, "[GPIOAdapter] Already activated — skipping\n");
-        return;
+        std::fprintf(stderr, "[GPIOAdapter] Already built — skipping\n");
+        return false;
     }
 
     if (lines_.empty()) {
-        std::printf("[GPIOAdapter] No registered lines to activate\n");
+        std::printf("[GPIOAdapter] No registered lines to build RT PDOs for\n");
         activated_ = true;
-        return;
+        return true;
     }
 
     // Request hardware handles for each registered line
@@ -136,7 +136,19 @@ void GPIOAdapter::deferredActivate()
     }
 
     activated_ = true;
-    std::printf("[GPIOAdapter] Activated: %zu registered lines in RT cycle\n", lines_.size());
+    std::printf("[GPIOAdapter] Built RT: %zu registered lines in process image\n", lines_.size());
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Legacy compatibility wrapper — deferredActivate now delegates to buildRT().
+// Kept for backward compatibility during migration; returns void per legacy API contract.
+// The return value is intentionally ignored since old callers don't check it anyway.
+// ---------------------------------------------------------------------------
+void GPIOAdapter::deferredActivate()
+{
+    [[maybe_unused]] bool ok = buildRT();
+    (void)ok;  // Suppress nodiscard warning — legacy API was fire-and-forget.
 }
 
 // ---------------------------------------------------------------------------

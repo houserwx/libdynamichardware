@@ -32,10 +32,11 @@ static const char* inferChannelType(uint8_t bitLength, bool isOutput) noexcept {
 }
 
 // ---------------------------------------------------------------------------
-// initialize()
+// discover() — IDiscoveryBackend implementation
+// Acquires master, creates domain, scans slaves, populates catalog.
+// Master stays open for buildRT() phase but is NOT activated yet.
 // ---------------------------------------------------------------------------
-
-bool EthercatAdapter::initialize()
+bool EthercatAdapter::discover()
 {
 #ifdef ETHERCAT_AVAILABLE
     // 1. Acquire master
@@ -54,10 +55,33 @@ bool EthercatAdapter::initialize()
         return false;
     }
 
-    // 3. Discover slaves, register PDOs, configure DC
+    // 3. Discover slaves, register PDOs in catalog, configure DC sync
+    // The master stays open so buildRT() can activate it later.
     if (!discoverSlaves()) {
         ecrt_release_master(master_);
         master_ = nullptr;
+        return false;
+    }
+
+    std::printf("[EtherCAT] Discovery complete: %d slave(s), %zu PDO entries registered in catalog\n",
+                nSlaves_, regs_.size());
+    return true;
+#else
+    std::fprintf(stderr, "[EthercatAdapter] EtherCAT not available — stub mode\n");
+    return false;
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// buildRT() — IRTBackend implementation
+// Activates master, builds PDO structure from discovered entries,
+// waits for WC_COMPLETE. Called after consumer configuration phase.
+// ---------------------------------------------------------------------------
+bool EthercatAdapter::buildRT()
+{
+#ifdef ETHERCAT_AVAILABLE
+    if (master_ == nullptr) {
+        std::fprintf(stderr, "[EtherCAT] Cannot build RT — no master acquired (call discover first)\n");
         return false;
     }
 

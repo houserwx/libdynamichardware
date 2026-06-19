@@ -1,5 +1,6 @@
 #pragma once
-#include "dynamichardware/pdo/IHardwareAdapter.h"
+#include "dynamichardware/pdo/IDiscoveryBackend.h"
+#include "dynamichardware/pdo/IRTBackend.h"
 #include "dynamichardware/pdo/HardwareCatalog.h"
 #include "dynamichardware/backends/ethercat/SlaveTypeInfo.h"
 #include <vector>
@@ -79,8 +80,14 @@ struct EcEntryReg {
 // Both methods operate on the IgH-managed domainData_ buffer directly.
 // PDOEntry::image pointers inside pdos_[0].entries point into this buffer,
 // so no copy is needed between the IgH buffer and PDO::image.
-
-class EthercatAdapter final : public dynamichardware::pdo::IHardwareAdapter {
+//
+// Two-phase lifecycle (ISP split):
+//   discover()  — acquire master, scan slaves, populate catalog. Master stays open.
+//   buildRT()   — activate master, create process data, construct PDO entries,
+//                 wait for WC_COMPLETE. Consumer config happens between phases.
+class EthercatAdapter final
+    : public dynamichardware::pdo::IDiscoveryBackend,
+      public dynamichardware::pdo::IRTBackend {
 public:
     /// @param cycleNs  EtherCAT cycle period in nanoseconds (must match DC sync config).
     explicit EthercatAdapter(uint32_t cycleNs = 1'000'000u) noexcept
@@ -92,15 +99,19 @@ public:
 #endif
     }
 
-    /// Optionally attach a HardwareCatalog before calling initialize().
-    void setCatalog(dynamichardware::pdo::HardwareCatalog* catalog) noexcept { catalog_ = catalog; }
+    // setCatalog inherited from IDiscoveryBackend.
 
-    /// Optionally attach the application Config before calling initialize().
+    /// Optionally attach the application Config before calling discover().
     void setConfig(const Config* config) noexcept { config_ = config; }
 
-    /// Discover slaves, register PDOs, configure DC sync, activate master,
-    /// block until all slaves reach WC_COMPLETE (or timeout).
-    bool initialize() override;
+    // --- IDiscoveryBackend implementation -----------------------------------
+    /// Acquire master, scan slaves on bus, populate catalog with discovered channels.
+    [[nodiscard]] bool discover() override;
+
+    // --- IRTbackend implementation ------------------------------------------
+    /// Activate master, build PDO structure, wait for WC_COMPLETE.
+    [[nodiscard]] bool buildRT() override;
+    // activate() uses default no-op (activation happens inline during buildRT).
 
     /// Receive EtherCAT frames and process domain data into domainData_.
     void onBeforeReadInputs()  noexcept override;
@@ -141,7 +152,7 @@ private:
     struct { uint16_t wc_state{0}; uint16_t working_counter{0}; } lastDomainState_{};
 #endif
     uint32_t          cycleNs_;
-    dynamichardware::pdo::HardwareCatalog*  catalog_{nullptr};
+    // catalog_ inherited protected from IDiscoveryBackend.
     const Config*     config_{nullptr};
 
     int               nSlaves_{0};

@@ -4,7 +4,7 @@
 
 namespace dynamichardware::pdo {
 
-void HardwareRegistry::addBackend(std::unique_ptr<IHardwareAdapter> adapter)
+void HardwareRegistry::addBackend(std::unique_ptr<IRTBackend> adapter)
 {
     if (frozen_) {
         throw std::logic_error("addBackend() after freezeForRt()");
@@ -49,7 +49,7 @@ void HardwareRegistry::freezeForRt()
 }
 
 // ---- RT cycle -------------------------------------------------------
-// Registry is friend of IHardwareAdapter so it can iterate mutable pdos_
+// Registry is friend of IRTBackend so it can iterate mutable pdos_
 // during freeze and RT sweeps.
 
 void HardwareRegistry::readAll() noexcept

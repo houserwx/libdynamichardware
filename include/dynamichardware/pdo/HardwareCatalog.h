@@ -28,10 +28,12 @@
 // Usage:
 //   1. catalog.load(path)                   — at startup (ok if file absent)
 //   2. adapter.setCatalog(&catalog)
-//   3. adapter.initialize()                 — registers channels during discovery
-//   4. catalog.save(path)                   — immediately after initialize()
-//   5. registry.buildUuidMap()              — builds string→PDOEntry* map
-// ============================================================================
+//   3. adapter.discover()                   — populates catalog from hardware scan
+//   4. catalog.save(path)                   — immediately after discover()
+//   5. adapter.buildRT()                    — construct PDOs and activate backend
+//   6. registry.addBackend(adapter)         — transfer ownership to registry
+//   7. registry.buildUuidMap()              — builds string→PDOEntry* map
+// ==============================================================================
 
 namespace dynamichardware::pdo {
 
@@ -84,9 +86,11 @@ struct CatalogEntry {
 // Usage:
 //   1. catalog.load(path)                   — at startup (ok if file absent)
 //   2. adapter.setCatalog(&catalog)
-//   3. adapter.initialize()                 — registers channels during discovery
-//   4. catalog.save(path)                   — immediately after initialize()
-//   5. registry.buildUuidMap()              — builds string→PDOEntry* map
+//   3. adapter.discover()                   — populates catalog from hardware scan
+//   4. catalog.save(path)                   — immediately after discover()
+//   5. adapter.buildRT()                    — construct PDOs and activate backend
+//   6. registry.addBackend(adapter)         — transfer ownership to registry
+//   7. registry.buildUuidMap()              — builds string→PDOEntry* map
 //
 // On subsequent starts the same keys re-map to the same UUIDs.
 // ---------------------------------------------------------------------------

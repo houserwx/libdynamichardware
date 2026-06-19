@@ -1,5 +1,5 @@
 #pragma once
-#include "dynamichardware/pdo/IHardwareAdapter.h"
+#include "dynamichardware/pdo/IRTBackend.h"
 #include <cstddef>
 #include <memory>
 #include <string>
@@ -44,7 +44,7 @@ public:
     // --- Init phase -------------------------------------------------
 
     // Transfer ownership of a backend. Must be called before freezeForRt().
-    void addBackend(std::unique_ptr<IHardwareAdapter> adapter);
+    void addBackend(std::unique_ptr<IRTBackend> adapter);
 
     // Build the UUID → PDOEntry* map from all currently registered backends.
     void buildUuidMap();
@@ -93,7 +93,7 @@ private:
                ((static_cast<uint8_t>(t) & BASE_MSG) != BASE_MSG); // Exclude message types
     }
 
-    std::vector<std::unique_ptr<IHardwareAdapter>> backends_;
+    std::vector<std::unique_ptr<IRTBackend>> backends_;
     std::unordered_map<std::string, PDOEntry*>     uuidMap_;
     bool                                            frozen_{false};
 };
