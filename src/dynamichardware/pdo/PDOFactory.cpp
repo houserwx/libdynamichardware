@@ -95,6 +95,11 @@ EntryType PDOFactory::stringToEntryType(const std::string& channelType)
     if (icmp(channelType, "MagnetometerZ")) return EntryType::FloatInput;
     if (icmp(channelType, "Barometer"))     return EntryType::FloatInput;
 
+    // Baro/compass types (float)
+    if (icmp(channelType, "Baro_Pressure"))   return EntryType::FloatInput;
+    if (icmp(channelType, "Baro_Temperature")) return EntryType::FloatInput;
+    if (icmp(channelType, "Compass_Heading")) return EntryType::FloatInput;
+
     // GPS types
     if (icmp(channelType, "GPS_Latitude"))   return EntryType::FloatInput;
     if (icmp(channelType, "GPS_Longitude"))  return EntryType::FloatInput;

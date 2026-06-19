@@ -88,7 +88,7 @@ enum EntryType : uint8_t {
 constexpr bool    entryIsInput(uint8_t t)     noexcept { return t & DIR_INPUT;  }
 constexpr bool    entryIsOutput(uint8_t t)    noexcept { return t & DIR_OUTPUT; }
 constexpr bool    entryIsMessage(uint8_t t)   noexcept { return (t & 0x18) == BASE_MSG; }
-constexpr uint8_t entryValueFormat(uint8_t t) noexcept { return t & 0xF0; }
+constexpr uint8_t entryValueFormat(uint8_t t) noexcept { return t & 0x78; }
 constexpr uint8_t entryBitSize(uint8_t t)     noexcept { return t & 0x60; }
 constexpr bool    entryIsSigned(uint8_t t)    noexcept { return t & SIGNED; }
 
@@ -162,7 +162,7 @@ struct PDOEntry {
     [[nodiscard]] int16_t getInt16()   const noexcept { return int16Val_; }  // Int16Input
     void                  setInt16(int16_t v)    noexcept { int16Desired_ = v; }  // Int16Output
     [[nodiscard]] float   getFloat()   const noexcept { return floatVal_; }  // FloatInput
-    void                  setFloat(float v)       noexcept { floatVal_ = v; }  // FloatOutput
+    void                  setFloat(float v)       noexcept { floatDesired_ = v; }  // FloatOutput
 
 private:
     // Read-side cache — updated by read()

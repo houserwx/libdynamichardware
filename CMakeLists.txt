@@ -194,3 +194,51 @@ install(FILES
     ${CMAKE_CURRENT_BINARY_DIR}/DynamicHardwareConfigVersion.cmake
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/DynamicHardware
 )
+
+# ── Unit tests ──────────────────────────────────────────────────────────────
+
+option(BUILD_TESTS "Build unit tests" OFF)
+
+if(BUILD_TESTS)
+    enable_testing()
+
+    # Fetch Catch2 (no system dependency required)
+    include(FetchContent)
+    FetchContent_Declare(
+        Catch2
+        GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+        GIT_TAG v3.7.0
+    )
+    FetchContent_MakeAvailable(Catch2)
+
+    set(TEST_SOURCES
+        tests/test_entrytype_bitmask.cpp
+        tests/test_pdo_entry.cpp
+        tests/test_signal_process.cpp
+        tests/test_vector_buffer.cpp
+        tests/test_pdo_freeze.cpp
+        tests/test_pdo_factory.cpp
+        tests/test_hardware_registry.cpp
+        tests/test_hardware_catalog.cpp
+    )
+
+    add_executable(unit_tests ${TEST_SOURCES})
+    target_link_libraries(unit_tests PRIVATE dynamichardware Catch2::Catch2WithMain)
+    target_include_directories(unit_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_options(unit_tests PRIVATE -Wall -Wextra)
+
+    # Propagate optional backend definitions so test compilation doesn't fail
+    if(ETHERCAT_AVAILABLE)
+        target_compile_definitions(unit_tests PRIVATE ETHERCAT_AVAILABLE)
+        target_include_directories(unit_tests PRIVATE ${ETHERCAT_INCLUDE_DIR})
+    endif()
+    if(LIBGPIOD_FOUND)
+        target_compile_definitions(unit_tests PRIVATE GPIO_LIBGPIOD_AVAILABLE)
+        if(LIBGPIOD_INCLUDE_DIR)
+            target_include_directories(unit_tests PRIVATE ${LIBGPIOD_INCLUDE_DIR})
+        endif()
+    endif()
+
+    include(CTest)
+    add_test(NAME unit_tests COMMAND unit_tests)
+endif()
