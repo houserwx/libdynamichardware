@@ -33,7 +33,7 @@
 //   5. registry.buildUuidMap()              — builds string→PDOEntry* map
 // ============================================================================
 
-namespace fc::pdo {
+namespace dynamichardware::pdo {
 
 // ---------------------------------------------------------------------------
 // CatalogEntry — one PDO channel identified solely by its stable UUID.
@@ -153,4 +153,4 @@ private:
     static std::string generateUuid();
 };
 
-} // namespace fc::pdo
+} // namespace dynamichardware::pdo

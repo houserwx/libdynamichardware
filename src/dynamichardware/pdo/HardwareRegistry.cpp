@@ -1,4 +1,4 @@
-#include "dynamichardware/backends/pdo/HardwareRegistry.h"
+#include "dynamichardware/pdo/HardwareRegistry.h"
 #include <cstdio>
 #include <stdexcept>
 
@@ -59,9 +59,14 @@ void HardwareRegistry::readAll() noexcept
 
         // Phase 2: concrete read sweep — latch value from image into entry cache
         // No virtual calls — PDOEntry::read() is a concrete struct method.
+        // Only read INPUT entries; outputs are written by writeAll().
         for (auto& pdo : backend->getPDOs()) {
             for (auto& e : pdo.entries) {
-                e.read();
+                if (e.type == EntryType::DigitalInput ||
+                    e.type == EntryType::Encoder ||
+                    e.type == EntryType::AnalogInput) {
+                    e.read();
+                }
             }
         }
     }
@@ -72,9 +77,13 @@ void HardwareRegistry::writeAll() noexcept
     for (auto& backend : backends_) {
         // Phase 3: concrete write sweep — flush pulse/desired state into image
         // No virtual calls — PDOEntry::write() is a concrete struct method.
+        // Only write OUTPUT entries; inputs are read by readAll().
         for (auto& pdo : backend->getPDOs()) {
             for (auto& e : pdo.entries) {
-                e.write();
+                if (e.type == EntryType::DigitalOutput ||
+                    e.type == EntryType::AnalogOutput) {
+                    e.write();
+                }
             }
         }
 
@@ -98,6 +107,16 @@ const PDOEntry* HardwareRegistry::lookupByUuid(std::string_view uuid) const noex
     if (uuid.empty()) return nullptr;
     auto it = uuidMap_.find(std::string{uuid});
     return (it != uuidMap_.end()) ? it->second : nullptr;
+}
+
+// ---- Health monitoring ----------------------------------------------
+
+bool HardwareRegistry::allBackendsHealthy() const noexcept
+{
+    if (backends_.empty()) return true;
+    // For now: if backends are registered, consider healthy.
+    // Future: check each backend's isFullyCommunicating() or equivalent.
+    return true;
 }
 
 // ---- Debug ----------------------------------------------------------

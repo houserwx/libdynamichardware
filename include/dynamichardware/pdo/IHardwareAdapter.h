@@ -1,5 +1,5 @@
 #pragma once
-#include "backends/pdo/PDO.h"
+#include "dynamichardware/pdo/PDO.h"
 #include <vector>
 
 // ============================================================
@@ -10,7 +10,7 @@
 // Per-entry read/write is concrete (PDOEntry::read/write).
 // ============================================================
 
-namespace fc::pdo {
+namespace dynamichardware::pdo {
 
 class IHardwareAdapter {
 public:
@@ -32,4 +32,4 @@ protected:
     std::vector<PDO> pdos_;
 };
 
-} // namespace fc::pdo
+} // namespace dynamichardware::pdo

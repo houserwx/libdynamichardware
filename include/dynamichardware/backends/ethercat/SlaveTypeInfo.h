@@ -18,7 +18,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace fc::ethercat {
+namespace dynamichardware::ethercat {
 
 // ---------------------------------------------------------------------------
 // DcOpMode — one DC synchronisation operating mode from ESI XML.
@@ -69,4 +69,4 @@ inline const DcOpMode* lookupDcMode(const SlaveTypeInfo* info) {
     return nullptr;
 }
 
-} // namespace fc::ethercat
+} // namespace dynamichardware::ethercat

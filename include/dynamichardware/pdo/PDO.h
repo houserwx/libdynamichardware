@@ -26,7 +26,7 @@
 #include <string>
 #include <vector>
 
-namespace fc::pdo {
+namespace dynamichardware::pdo {
 
 // ------------------------------------------------------------
 // EntryType — replaces virtual dispatch for typed accessor logic.
@@ -69,8 +69,8 @@ struct PDOEntry {
     std::string uuid;
     EntryType type{EntryType::DigitalInput};
 
-    common::rt::DebounceMachine debounce;
-    common::rt::PulseMachine    pulse;
+    dynamichardware::rt::DebounceMachine debounce;
+    dynamichardware::rt::PulseMachine    pulse;
 
     // Message slot (MessageOut / MessageIn entries only)
     struct MessageSlot {
@@ -198,4 +198,4 @@ struct PDO {
     void freeze();
 };
 
-} // namespace fc::pdo
+} // namespace dynamichardware::pdo

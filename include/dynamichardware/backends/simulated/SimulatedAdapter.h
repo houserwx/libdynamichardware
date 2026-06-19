@@ -1,11 +1,11 @@
 #pragma once
-#include "backends/pdo/IHardwareAdapter.h"
-#include "backends/ethercat/HardwareCatalog.h"
+#include "dynamichardware/pdo/IHardwareAdapter.h"
+#include "dynamichardware/pdo/HardwareCatalog.h"
 #include <vector>
 #include <string>
 #include <cstdint>
 
-namespace fc::simulated {
+namespace dynamichardware::simulated {
 
 // ============================================================
 // SimulatedAdapter — virtual hardware adapter.
@@ -40,7 +40,7 @@ namespace fc::simulated {
 //   4. RT: onBeforeReadInputs() writes synthetic values
 // ============================================================
 
-class SimulatedAdapter final : public fc::pdo::IHardwareAdapter {
+class SimulatedAdapter final : public dynamichardware::pdo::IHardwareAdapter {
 public:
     SimulatedAdapter() = default;
     ~SimulatedAdapter() override = default;
@@ -49,7 +49,7 @@ public:
     void onBeforeReadInputs()  noexcept override;
     void onAfterWriteOutputs() noexcept override;
 
-    void setCatalog(fc::pdo::HardwareCatalog* catalog) noexcept { catalog_ = catalog; }
+    void setCatalog(dynamichardware::pdo::HardwareCatalog* catalog) noexcept { catalog_ = catalog; }
 
     /// Load simulated channel definitions from a JSON file.
     /// Registers entries into the attached HardwareCatalog.
@@ -61,12 +61,12 @@ public:
     [[nodiscard]] std::size_t channelCount() const noexcept { return simStates_.size(); }
 
 private:
-    fc::pdo::HardwareCatalog* catalog_{nullptr};
+    dynamichardware::pdo::HardwareCatalog* catalog_{nullptr};
     uint32_t                  cycleNs_{500'000};
     double                    cycleNsD_{500'000.0};
 
     struct SimState {
-        fc::pdo::EntryType type{fc::pdo::EntryType::DigitalInput};
+        dynamichardware::pdo::EntryType type{dynamichardware::pdo::EntryType::DigitalInput};
         uint32_t  byteOffset{0};
 
         // Encoder
@@ -91,4 +91,4 @@ private:
     std::vector<SimState> simStates_;
 };
 
-} // namespace fc::simulated
+} // namespace dynamichardware::simulated

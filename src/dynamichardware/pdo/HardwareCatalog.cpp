@@ -1,4 +1,4 @@
-#include "dynamichardware/backends/ethercat/HardwareCatalog.h"
+#include "dynamichardware/pdo/HardwareCatalog.h"
 
 #include <fstream>
 #include <random>

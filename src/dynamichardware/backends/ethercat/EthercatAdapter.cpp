@@ -1,5 +1,5 @@
 #include "dynamichardware/backends/ethercat/EthercatAdapter.h"
-#include "dynamichardware/backends/ethercat/HardwareCatalog.h"
+#include "dynamichardware/pdo/HardwareCatalog.h"
 #include "dynamichardware/backends/ethercat/SlaveTypeInfo.h"
 
 #include <algorithm>

@@ -1,5 +1,5 @@
 #pragma once
-#include "backends/pdo/IHardwareAdapter.h"
+#include "dynamichardware/pdo/IHardwareAdapter.h"
 #include <cstddef>
 #include <memory>
 #include <string>
@@ -7,7 +7,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace fc::pdo {
+namespace dynamichardware::pdo {
 
 // ============================================================
 // HardwareRegistry — owns backends, orchestrates the RT cycle,
@@ -80,4 +80,4 @@ private:
     bool                                            frozen_{false};
 };
 
-} // namespace fc::pdo
+} // namespace dynamichardware::pdo

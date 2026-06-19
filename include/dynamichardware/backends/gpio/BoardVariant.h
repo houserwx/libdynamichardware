@@ -21,7 +21,7 @@
 #include <cstdint>
 #include <string>
 
-namespace fc::gpio {
+namespace dynamichardware::gpio {
 
 // Board variant enum — set during detection
 enum class BoardVariant : uint8_t {
@@ -47,4 +47,4 @@ enum class BoardVariant : uint8_t {
 /// Check whether the GPIO chip path exists and is accessible.
 [[nodiscard]] bool gpioChipAvailable(BoardVariant variant) noexcept;
 
-} // namespace fc::gpio
+} // namespace dynamichardware::gpio

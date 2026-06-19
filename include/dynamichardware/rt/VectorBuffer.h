@@ -24,7 +24,7 @@
 #include <span>
 #include <vector>
 
-namespace common::rt {
+namespace dynamichardware::rt {
 
 template<typename T>
 class VectorBuffer {
@@ -95,4 +95,4 @@ private:
     std::atomic<std::size_t> readIdx_;
 };
 
-} // namespace common::rt
+} // namespace dynamichardware::rt

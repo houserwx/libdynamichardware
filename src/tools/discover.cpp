@@ -1,30 +1,29 @@
-// dh-discover — enumerate available backends and build/inspect hardware catalog
+// dh-discover — enumerate available backends, discover hardware, manage catalogs
 //
 // Usage:
-//   dh-discover                          # auto-detect all available backends
-//   dh-discover --catalog path.json      # discover + save catalog to path.json
-//   dh-discover --inspect path.json      # print existing catalog entries
-//   dh-discover --catalog out.json --sim # use simulated backend only (no hardware)
+//   dh-discover                              # auto-detect all available backends
+//   dh-discover --catalog path.json          # discover + save catalog to path.json
+//   dh-discover --inspect path.json          # print existing catalog entries
+//   dh-discover --sim --catalog sim.json     # simulated backend only
+//   dh-discover --gen-simdefs cat.json out.json  # generate sim definitions from catalog
 
-#include "backends/pdo/HardwareRegistry.h"
-#include "backends/pdo/PDO.h"
-#include "backends/ethercat/HardwareCatalog.h"
-#include "backends/ethercat/EthercatAdapter.h"
-#include "backends/gpio/GPIOAdapter.h"
-#include "backends/gpio/BoardVariant.h"
-#include "backends/i2c/I2CAdapter.h"
-#include "backends/spi/SPIAdapter.h"
-#include "backends/simulated/SimulatedAdapter.h"
-#include "dynamichardware/rt/SignalProcess.h"
+#include "dynamichardware/DynamicHardwareContext.h"
+#include "dynamichardware/pdo/HardwareCatalog.h"
+#include "dynamichardware/backends/gpio/BoardVariant.h"
+
+#ifdef ETHERCAT_AVAILABLE
+#include "dynamichardware/backends/ethercat/EthercatAdapter.h"
+#endif
 
 #include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Helpers ─────────────────────────────────────────────────────
 
 static void printSeparator()
 {
@@ -38,7 +37,7 @@ static void printHeader(const char* title)
     printSeparator();
 }
 
-// ── Backend detection ────────────────────────────────────────────────────────
+// ── Backend detection (useful for CLI probing) ──────────────────
 
 struct BackendInfo {
     std::string name;
@@ -56,24 +55,20 @@ static BackendInfo detectEtherCAT()
     return info;
 #endif
 
-    // Try to open master 0
     info.probed = true;
 #ifdef ETHERCAT_AVAILABLE
     auto* master = ecrt_request_master(0);
     if (master) {
         info.available = true;
-        info.detail    = "Master 0 available";
-
-        // Query master state to see if slaves respond
         ec_master_state_t state;
-        if (ecrt_master_state(master, &state) == 0) {
-            if (state.slaves_responding > 0) {
-                info.detail = "Master 0 — " + std::to_string(state.slaves_responding) + " slave(s) responding";
-            }
+        if (ecrt_master_state(master, &state) == 0 && state.slaves_responding > 0) {
+            info.detail = "Master 0 — " + std::to_string(state.slaves_responding) + " slave(s)";
+        } else {
+            info.detail = "Master 0 available";
         }
         ecrt_release_master(master);
     } else {
-        info.detail = "Cannot request master 0 (check permissions or hardware)";
+        info.detail = "Cannot request master 0";
     }
 #else
     info.detail = "stub";
@@ -91,21 +86,14 @@ static BackendInfo detectGPIO()
 #endif
 
     info.probed = true;
-
-    auto variant = fc::gpio::detectBoardVariant();
-    std::string chipPath = fc::gpio::gpioChipPath(variant);
-
-    if (variant == fc::gpio::BoardVariant::UNKNOWN) {
-        info.detail = "Not a recognized Raspberry Pi (may still work in stub mode)";
+    auto variant = dynamichardware::gpio::detectBoardVariant();
+    if (variant == dynamichardware::gpio::BoardVariant::UNKNOWN) {
+        info.detail = "Not a recognized Raspberry Pi";
     } else {
-        info.detail = fc::gpio::boardVariantName(variant);
-
-        if (fc::gpio::gpioChipAvailable(variant)) {
+        info.detail = dynamichardware::gpio::boardVariantName(variant);
+        if (dynamichardware::gpio::gpioChipAvailable(variant)) {
             info.available = true;
-            info.detail += " — " + chipPath + " accessible (" +
-                           std::to_string(fc::gpio::gpioLineCount(variant)) + " lines)";
-        } else {
-            info.detail += " — " + chipPath + " not accessible";
+            info.detail += " — " + dynamichardware::gpio::gpioChipPath(variant);
         }
     }
     return info;
@@ -116,17 +104,13 @@ static BackendInfo detectI2C()
     BackendInfo info{"I2C", false, false, ""};
     info.probed = true;
 
-    // Check for common I2C dev nodes
     std::vector<std::string> i2cDevs = {
         "/dev/i2c-0", "/dev/i2c-1", "/dev/i2c-2", "/dev/i2c-3", "/dev/i2c-4"
     };
     std::vector<std::string> found;
     for (const auto& path : i2cDevs) {
         FILE* f = fopen(path.c_str(), "r");
-        if (f) {
-            found.push_back(path);
-            fclose(f);
-        }
+        if (f) { found.push_back(path); fclose(f); }
     }
 
     if (!found.empty()) {
@@ -152,10 +136,7 @@ static BackendInfo detectSPI()
     std::vector<std::string> found;
     for (const auto& path : spiDevs) {
         FILE* f = fopen(path.c_str(), "r");
-        if (f) {
-            found.push_back(path);
-            fclose(f);
-        }
+        if (f) { found.push_back(path); fclose(f); }
     }
 
     if (!found.empty()) {
@@ -174,7 +155,6 @@ static BackendInfo detectCAN()
     BackendInfo info{"CAN", false, false, ""};
     info.probed = true;
 
-    // Check for can interfaces via /sys/class/net
     FILE* fp = popen("ls /sys/class/net/ 2>/dev/null | grep -E '^can[0-9]+$'", "r");
     if (fp) {
         char buf[256];
@@ -193,8 +173,6 @@ static BackendInfo detectCAN()
         } else {
             info.detail = "No can* network interfaces found";
         }
-    } else {
-        info.detail = "Cannot check /sys/class/net";
     }
     return info;
 }
@@ -212,10 +190,7 @@ static BackendInfo detectUART()
     std::vector<std::string> found;
     for (const auto& path : uartDevs) {
         FILE* f = fopen(path.c_str(), "r");
-        if (f) {
-            found.push_back(path);
-            fclose(f);
-        }
+        if (f) { found.push_back(path); fclose(f); }
     }
 
     if (!found.empty()) {
@@ -229,43 +204,30 @@ static BackendInfo detectUART()
     return info;
 }
 
-// ── Catalog inspection ───────────────────────────────────────────────────────
+// ── Catalog inspection ─────────────────────────────────────
 
-static bool inspectCatalog(const std::string& path)
+static bool inspectCatalog(const std::vector<dynamichardware::pdo::CatalogEntry>& entries)
 {
-    fc::pdo::HardwareCatalog catalog;
-    if (!catalog.load(path)) {
-        std::fprintf(stderr, "Failed to load catalog: %s\n", path.c_str());
-        return false;
-    }
-
     printHeader("Hardware Catalog");
-    std::printf("Path:  %s\n", path.c_str());
-    std::printf("Entries: %zu\n", catalog.entries().size());
+    std::printf("Entries: %zu\n", entries.size());
     printSeparator();
 
-    // Group by slave name
-    if (catalog.entries().empty()) {
+    if (entries.empty()) {
         std::printf("(empty catalog — no channels discovered)\n");
     } else {
-        const auto& entries = catalog.entries();
-
-        // Header
-        std::printf("%-8s  %-28s  %-6s  %-5s  %-5s  %-14s  %-20s\n",
-                    "Output", "Key", "Pos", "PDO", "Sub", "ChannelType", "UUID");
-        std::printf("%-8s  %-28s  %-6s  %-5s  %-5s  %-14s  %-20s\n",
-                    "------", "----------------------------", "------",
-                    "-----", "-----", "--------------", "--------------------");
+        std::printf("%-8s  %-28s  %-14s  %-20s  %s\n",
+                    "Output", "Key", "ChannelType", "UUID", "Name");
+        std::printf("%-8s  %-28s  %-14s  %-20s  %s\n",
+                    "------", "----------------------------", "--------------",
+                    "--------------------", "--------------------");
 
         for (const auto& e : entries) {
-            std::printf("%-8s  %-28s  %-6u  %-5u  %-5u  %-14s  %s\n",
+            std::printf("%-8s  %-28s  %-14s  %s  %s\n",
                         e.isOutput ? "Y" : "N",
                         e.key.c_str(),
-                        e.slavePos,
-                        e.pdoIndex,
-                        e.pdoSubindex,
                         e.channelType.c_str(),
-                        e.uuid.c_str());
+                        e.uuid.c_str(),
+                        e.name.c_str());
         }
     }
 
@@ -273,157 +235,142 @@ static bool inspectCatalog(const std::string& path)
     return true;
 }
 
-// ── Simulated discovery (no hardware needed) ─────────────────────────────────
+static bool inspectCatalogFile(const std::string& path)
+{
+    dynamichardware::pdo::HardwareCatalog catalog;
+    if (!catalog.load(path)) {
+        std::fprintf(stderr, "Failed to load catalog: %s\n", path.c_str());
+        return false;
+    }
 
-static void runSimulatedDiscovery(const std::optional<std::string>& catalogPath)
+    std::printf("Path:  %s\n", path.c_str());
+    return inspectCatalog(catalog.entries());
+}
+
+// ── Discovery via DynamicHardwareContext ───────────────
+
+static void runSimulatedDiscovery(
+        const std::optional<std::string>& catalogPath,
+        const std::optional<std::string>& defsPath)
 {
     printHeader("Simulated Backend Discovery");
 
-    fc::pdo::HardwareCatalog catalog;
-    auto adapter = std::make_unique<fc::simulated::SimulatedAdapter>();
-    adapter->setCatalog(&catalog);
-    adapter->setCycleTimeUs(1000);
+    auto builder = dynamichardware::DynamicHardwareContext::builder()
+        .withSimulation(defsPath)
+        .catalogPath(catalogPath.value_or("hardware.json"));
 
-    // Register example simulated channels directly into catalog
-    fc::pdo::CatalogEntry enc;
-    enc.key = "SIM|SimEncoder-A"; enc.uuid = "virt-enc-a-0001";
-    enc.channelType = "Encoder"; enc.name = "SimEncoder-A";
-    enc.slaveName = "Simulated"; enc.isSimulated = true;
-    enc.sim.rpm = 3000.0f; enc.sim.rollerDiamMm = 50.0f;
-    enc.sim.resolutionPpr = 1024;
-    catalog.addEntry(std::move(enc));
-
-    fc::pdo::CatalogEntry di;
-    di.key = "SIM|SimDigitalInput-1"; di.uuid = "virt-di-0001";
-    di.channelType = "DigitalInput"; di.name = "SimDigitalInput-1";
-    di.slaveName = "Simulated"; di.isSimulated = true;
-    di.sim.partsPerMin = 120.0f;
-    catalog.addEntry(std::move(di));
-
-    fc::pdo::CatalogEntry do_ch;
-    do_ch.key = "SIM|SimDigitalOutput-1"; do_ch.uuid = "virt-do-0001";
-    do_ch.channelType = "DigitalOutput"; do_ch.name = "SimDigitalOutput-1";
-    do_ch.slaveName = "Simulated"; do_ch.isSimulated = true;
-    do_ch.isOutput = true; do_ch.sim.pulseMs = 100;
-    catalog.addEntry(std::move(do_ch));
-
-    if (!adapter->initialize()) {
-        std::fprintf(stderr, "Simulated adapter initialization failed\n");
+    auto ctx = builder.build();
+    if (!ctx) {
+        std::fprintf(stderr, "[discover] Failed to create context\n");
         return;
     }
 
-    auto& pdos = adapter->getPDOs();
-    std::printf("PDOs:      %zu\n", pdos.size());
-
-    std::size_t totalEntries = 0;
-    for (const auto& pdo : pdos) {
-        totalEntries += pdo.entries.size();
-    }
-    std::printf("Entries:   %zu\n", totalEntries);
-
-    for (const auto& pdo : pdos) {
-        for (const auto& entry : pdo.entries) {
-            std::printf("  %-20s  Type: %u  Offset: %u\n",
-                        entry.uuid.c_str(),
-                        static_cast<unsigned>(entry.type), entry.byteOffset);
-        }
+    if (!ctx->build()) {
+        std::fprintf(stderr, "[discover] Context build failed\n");
+        return;
     }
 
-    // Save catalog if requested
-    if (catalogPath.has_value()) {
-        if (catalog.save(catalogPath.value())) {
-            std::printf("[discover] Simulated catalog saved to %s\n\n", catalogPath.value().c_str());
-        }
+    std::printf("Backends:  %zu\n", ctx->backendCount());
+    std::printf("Entries:   %zu\n", ctx->entryCount());
+    std::printf("Healthy:   %s\n", ctx->allBackendsHealthy() ? "yes" : "no");
+
+    if (!ctx->catalogEntries().empty()) {
+        inspectCatalog(ctx->catalogEntries());
     }
-    std::printf("\n");
 }
-
-// ── Real hardware discovery ──────────────────────────────────────────────────
 
 static void runRealDiscovery(const std::optional<std::string>& catalogPath)
 {
-    fc::pdo::HardwareCatalog catalog;
+    printHeader("Hardware Discovery");
 
-    // Try to load existing catalog first (preserves UUIDs across runs)
-    if (catalogPath.has_value()) {
-        catalog.load(catalogPath.value());
+    auto builder = dynamichardware::DynamicHardwareContext::builder()
+        .catalogPath(catalogPath.value_or("hardware.json"));
+
+    // Enable backends based on detection
+    if (detectEtherCAT().available) builder.withEthercat();
+    if (detectGPIO().available) builder.withGPIO();
+    if (detectI2C().available) builder.withI2C();
+    if (detectSPI().available) builder.withSPI();
+
+    auto ctx = builder.build();
+    if (!ctx) {
+        std::fprintf(stderr, "[discover] Failed to create context\n");
+        return;
     }
 
-    // Collect adapters
-    std::vector<std::unique_ptr<fc::pdo::IHardwareAdapter>> adapters;
-
-    // EtherCAT
-    {
-        printHeader("EtherCAT Backend");
-#ifdef ETHERCAT_AVAILABLE
-        auto ecAdapter = std::make_unique<fc::ethercat::EthercatAdapter>(1'000'000u);
-        ecAdapter->setCatalog(&catalog);
-
-        std::printf("Initializing...\n");
-        if (ecAdapter->initialize()) {
-            std::printf("Status:    OK\n");
-            std::printf("Slaves:    %d\n", ecAdapter->slaveCount());
-            std::printf("Available: %s\n", ecAdapter->isAvailable() ? "yes" : "no");
-            std::printf("Channels:  %zu\n", catalog.entries().size());
-            adapters.push_back(std::move(ecAdapter));
-        } else {
-            std::printf("Initialization failed (no slaves or master unavailable)\n");
-        }
-#else
-        std::printf("Status:    stub (libethercat not linked)\n");
-#endif
-        std::printf("\n");
+    if (!ctx->build()) {
+        std::fprintf(stderr, "[discover] Context build failed\n");
+        return;
     }
 
-    // GPIO
-    {
-        printHeader("GPIO Backend");
-#ifdef GPIO_LIBGPIOD_AVAILABLE
-        auto gpioAdapter = std::make_unique<fc::gpio::GPIOAdapter>();
-        gpioAdapter->setCatalog(&catalog);
+    std::printf("Backends:  %zu\n", ctx->backendCount());
+    std::printf("Entries:   %zu\n", ctx->entryCount());
+    std::printf("Healthy:   %s\n", ctx->allBackendsHealthy() ? "yes" : "no");
 
-        auto variant = fc::gpio::detectBoardVariant();
-        std::printf("Board:     %s\n", fc::gpio::boardVariantName(variant).c_str());
-
-        // Try to discover available lines
-        if (!gpioAdapter->initialize()) {
-            std::printf("Initialization failed (GPIO chip not accessible)\n");
-        } else {
-            std::printf("Status:    OK\n");
-            std::printf("Lines:     %zu\n", gpioAdapter->lineCount());
-        }
-#else
-        std::printf("Status:    stub (libgpiod not linked)\n");
-#endif
-        std::printf("\n");
-    }
-
-    // I2C / SPI (stub backends — show they exist)
-    {
-        printHeader("I2C Backend");
-        std::printf("Status:    stub (sysfs I2C not yet implemented)\n\n");
-
-        printHeader("SPI Backend");
-        std::printf("Status:    stub (sysfs SPI not yet implemented)\n\n");
-    }
-
-    // Print discovered catalog
-    if (!catalog.empty()) {
-        inspectCatalog(catalogPath.has_value() ? catalogPath.value() : "(memory)");
-
-        // Save if a path was provided
-        if (catalogPath.has_value()) {
-            if (catalog.save(catalogPath.value())) {
-                std::printf("[discover] Catalog saved to %s\n\n", catalogPath.value().c_str());
-            }
-        }
+    if (!ctx->catalogEntries().empty()) {
+        inspectCatalog(ctx->catalogEntries());
     } else {
         std::printf("[discover] No hardware channels discovered.\n");
-        std::printf("  Run on target hardware or use --sim for simulated discovery.\n\n");
+        std::printf("  Run on target hardware or use --sim for simulated discovery.\n");
     }
 }
 
-// ── CLI ──────────────────────────────────────────────────────────────────────
+// ── Generate simulated adapter definitions from catalog ────
+
+static void generateSimDefs(const std::string& catalogPath, const std::string& outputPath)
+{
+    printHeader("Generate Simulated Adapter Definitions");
+
+    dynamichardware::pdo::HardwareCatalog catalog;
+    if (!catalog.load(catalogPath)) {
+        std::fprintf(stderr, "Failed to load catalog: %s\n", catalogPath.c_str());
+        return;
+    }
+
+    std::printf("Source catalog:  %s\n", catalogPath.c_str());
+    std::printf("Output file:     %s\n", outputPath.c_str());
+    std::printf("Channels:        %zu\n\n", catalog.entries().size());
+
+    std::ofstream out(outputPath);
+    if (!out) {
+        std::fprintf(stderr, "Cannot open output file: %s\n", outputPath.c_str());
+        return;
+    }
+
+    using json = nlohmann::json;
+    json defs = {{"cycleTimeUs", 1000}, {"channels", json::array()}};
+
+    for (const auto& e : catalog.entries()) {
+        json ch;
+        ch["name"] = e.name;
+        ch["uuid"] = e.uuid;
+        ch["channelType"] = e.channelType;
+
+        // Preserve sim parameters from source entry (if present)
+        json sim;
+        if (e.sim.rpm > 0.0f) sim["rpm"] = e.sim.rpm;
+        if (e.sim.rollerDiamMm > 0.0f) sim["rollerDiamMm"] = e.sim.rollerDiamMm;
+        if (e.sim.resolutionPpr > 0) sim["resolutionPpr"] = e.sim.resolutionPpr;
+        if (e.sim.quadrature) sim["quadrature"] = true;
+        if (e.sim.partsPerMin > 0.0f) sim["partsPerMin"] = e.sim.partsPerMin;
+        if (e.sim.partWidthMm > 0.0f) sim["partWidthMm"] = e.sim.partWidthMm;
+        if (e.sim.variancePercent > 0.0f) sim["variancePercent"] = e.sim.variancePercent;
+        if (e.sim.pulseMs > 0) sim["pulseMs"] = e.sim.pulseMs;
+        if (e.sim.debounceMs > 0) sim["debounceMs"] = e.sim.debounceMs;
+        if (!sim.empty()) ch["sim"] = sim;
+
+        defs["channels"].push_back(ch);
+    }
+
+    out << defs.dump(2) << std::endl;
+    out.close();
+
+    std::printf("Generated %s with %zu channel definitions\n",
+                outputPath.c_str(), defs["channels"].size());
+    std::printf("  Use with: dh-discover --sim --defs %s\n\n", outputPath.c_str());
+}
+
+// ── CLI ───────────────────────────────────────────────
 
 static void printUsage(const char* prog)
 {
@@ -433,17 +380,20 @@ static void printUsage(const char* prog)
         "Enumerate available hardware backends and build/inspect catalog.\n"
         "\n"
         "Options:\n"
-        "  --catalog <path>    Save discovered catalog to path (JSON)\n"
-        "  --inspect <path>    Print catalog entries from an existing file\n"
-        "  --sim               Use simulated backend (no hardware required)\n"
-        "  --help              Show this help\n"
+        "  --catalog <path>         Save discovered catalog to path (JSON)\n"
+        "  --inspect <path>         Print catalog entries from an existing file\n"
+        "  --sim                    Use simulated backend (no hardware required)\n"
+        "  --defs <path>            Load simulated adapter definitions from JSON\n"
+        "  --gen-simdefs <in> <out> Generate sim definitions from an existing catalog\n"
+        "  --help                   Show this help\n"
         "\n"
         "Examples:\n"
-        "  %s                              # detect all available backends\n"
-        "  %s --catalog hardware.json      # discover + save catalog\n"
-        "  %s --inspect hardware.json      # view saved catalog\n"
-        "  %s --sim --catalog sim.json     # simulated discovery\n",
-        prog, prog, prog, prog, prog
+        "  %s                                  # detect all available backends\n"
+        "  %s --catalog hardware.json          # discover + save catalog\n"
+        "  %s --inspect hardware.json          # view saved catalog\n"
+        "  %s --sim --catalog sim.json         # simulated discovery\n"
+        "  %s --gen-simdefs hw.json defs.json  # generate sim definitions\n",
+        prog, prog, prog, prog, prog, prog
     );
 }
 
@@ -451,7 +401,10 @@ int main(int argc, char** argv)
 {
     std::optional<std::string> catalogPath;
     std::optional<std::string> inspectPath;
+    std::optional<std::string> simDefsPath;
     bool simulated = false;
+    std::optional<std::string> genSimDefsIn;
+    std::optional<std::string> genSimDefsOut;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
@@ -469,6 +422,19 @@ int main(int argc, char** argv)
                 return 1;
             }
             inspectPath = argv[i];
+        } else if (strcmp(argv[i], "--defs") == 0) {
+            if (++i >= argc) {
+                std::fprintf(stderr, "Missing path for --defs\n");
+                return 1;
+            }
+            simDefsPath = argv[i];
+        } else if (strcmp(argv[i], "--gen-simdefs") == 0) {
+            if (++i >= argc || i + 1 >= argc) {
+                std::fprintf(stderr, "Missing input/output paths for --gen-simdefs\n");
+                return 1;
+            }
+            genSimDefsIn = argv[i++];
+            genSimDefsOut = argv[i];
         } else if (strcmp(argv[i], "--sim") == 0) {
             simulated = true;
         } else {
@@ -480,9 +446,16 @@ int main(int argc, char** argv)
 
     // Inspect mode: just read and print
     if (inspectPath.has_value()) {
-        return inspectCatalog(inspectPath.value()) ? 0 : 1;
+        return inspectCatalogFile(inspectPath.value()) ? 0 : 1;
     }
 
+    // Generate sim definitions mode
+    if (genSimDefsIn.has_value() && genSimDefsOut.has_value()) {
+        generateSimDefs(genSimDefsIn.value(), genSimDefsOut.value());
+        return 0;
+    }
+
+    // Backend detection table
     printHeader("Backend Detection");
     std::printf("Platform:  Linux (detected backends)\n");
     std::printf("Build:     nlohmann_json=%s, EtherCAT=%s, GPIO=%s\n",
@@ -504,14 +477,8 @@ int main(int argc, char** argv)
     );
     printSeparator();
 
-    // Enumerate all backends
     std::vector<BackendInfo> backends = {
-        detectEtherCAT(),
-        detectGPIO(),
-        detectI2C(),
-        detectSPI(),
-        detectCAN(),
-        detectUART()
+        detectEtherCAT(), detectGPIO(), detectI2C(), detectSPI(), detectCAN(), detectUART()
     };
 
     std::printf("%-12s  %-6s  %s\n", "Backend", "Found", "Detail");
@@ -524,9 +491,9 @@ int main(int argc, char** argv)
     }
     std::printf("\n");
 
-    // Now do actual discovery
+    // Run discovery
     if (simulated) {
-        runSimulatedDiscovery(catalogPath);
+        runSimulatedDiscovery(catalogPath, simDefsPath);
     } else {
         runRealDiscovery(catalogPath);
     }

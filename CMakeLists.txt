@@ -14,22 +14,25 @@ include(CMakePackageConfigHelpers)
 # ── Sources ──────────────────────────────────────────────────────────────────
 
 set(LD_SOURCES
-    # PDO core
-    src/backends/pdo/PDO.cpp
-    src/backends/pdo/HardwareRegistry.cpp
+    # Context — single library entry point
+    src/DynamicHardwareContext.cpp
+    # PDO core (transport layer — not a backend)
+    src/dynamichardware/pdo/PDO.cpp
+    src/dynamichardware/pdo/HardwareRegistry.cpp
+    src/dynamichardware/pdo/PDOFactory.cpp
+    src/dynamichardware/pdo/HardwareCatalog.cpp
     # EtherCAT adapter
-    src/backends/ethercat/EthercatAdapter.cpp
-    src/backends/ethercat/HardwareCatalog.cpp
-    src/backends/ethercat/kSlaveTypes.cpp
+    src/dynamichardware/backends/ethercat/EthercatAdapter.cpp
+    src/dynamichardware/backends/ethercat/kSlaveTypes.cpp
     # GPIO adapter
-    src/backends/gpio/BoardVariant.cpp
-    src/backends/gpio/GPIOAdapter.cpp
+    src/dynamichardware/backends/gpio/BoardVariant.cpp
+    src/dynamichardware/backends/gpio/GPIOAdapter.cpp
     # I2C adapter
-    src/backends/i2c/I2CAdapter.cpp
+    src/dynamichardware/backends/i2c/I2CAdapter.cpp
     # SPI adapter
-    src/backends/spi/SPIAdapter.cpp
+    src/dynamichardware/backends/spi/SPIAdapter.cpp
     # Simulated adapter
-    src/backends/simulated/SimulatedAdapter.cpp
+    src/dynamichardware/backends/simulated/SimulatedAdapter.cpp
 )
 
 add_library(dynamichardware STATIC ${LD_SOURCES})

@@ -1,6 +1,6 @@
 #pragma once
-#include "backends/pdo/IHardwareAdapter.h"
-#include "backends/ethercat/HardwareCatalog.h"
+#include "dynamichardware/pdo/IHardwareAdapter.h"
+#include "dynamichardware/pdo/HardwareCatalog.h"
 
 #include <string>
 #include <vector>
@@ -23,19 +23,19 @@
 // will be implemented when hardware is available.
 // ============================================================================
 
-namespace fc::i2c {
+namespace dynamichardware::i2c {
 
 struct I2CDevice {
     uint8_t  bus{0};
     uint8_t  address{0};
     std::string name;
-    std::vector<fc::pdo::PDOEntry*> entries;  // entries owned by this device
+    std::vector<dynamichardware::pdo::PDOEntry*> entries;  // entries owned by this device
 };
 
-class I2CAdapter final : public fc::pdo::IHardwareAdapter {
+class I2CAdapter final : public dynamichardware::pdo::IHardwareAdapter {
 public:
     I2CAdapter(std::string busPath);
-    void setCatalog(fc::pdo::HardwareCatalog* catalog) noexcept { catalog_ = catalog; }
+    void setCatalog(dynamichardware::pdo::HardwareCatalog* catalog) noexcept { catalog_ = catalog; }
     ~I2CAdapter() override = default;
 
     bool initialize() override;
@@ -49,11 +49,11 @@ public:
     /// @return             Index of the created PDO in pdos_
     int registerDevice(uint8_t deviceAddr,
                        std::string name,
-                       std::vector<fc::pdo::EntryType> entryTypes);
+                       std::vector<dynamichardware::pdo::EntryType> entryTypes);
 
 private:
     std::string busPath_;
-    fc::pdo::HardwareCatalog* catalog_{nullptr};
+    dynamichardware::pdo::HardwareCatalog* catalog_{nullptr};
     int i2cFd_{-1};
     std::vector<I2CDevice> devices_;
 
@@ -62,4 +62,4 @@ private:
     bool readRegisters(uint8_t addr, uint8_t reg, uint8_t* buf, size_t len) noexcept;
 };
 
-} // namespace fc::i2c
+} // namespace dynamichardware::i2c

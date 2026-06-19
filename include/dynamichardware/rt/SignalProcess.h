@@ -15,7 +15,7 @@
 //
 // Both are single-RT-thread only.  gSignalProcessNowNs is not atomic.
 // ---------------------------------------------------------------------------
-namespace common::rt {
+namespace dynamichardware::rt {
 
 // C++17 inline variable — exactly one definition across all translation units.
 inline uint64_t gSignalProcessNowNs{0u};
@@ -111,4 +111,4 @@ private:
     bool     settledV_{false};
 };
 
-} // namespace common::rt
+} // namespace dynamichardware::rt

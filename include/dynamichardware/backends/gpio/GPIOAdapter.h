@@ -1,7 +1,7 @@
 #pragma once
-#include "backends/gpio/BoardVariant.h"
-#include "backends/pdo/IHardwareAdapter.h"
-#include "backends/ethercat/HardwareCatalog.h"
+#include "dynamichardware/backends/gpio/BoardVariant.h"
+#include "dynamichardware/pdo/IHardwareAdapter.h"
+#include "dynamichardware/pdo/HardwareCatalog.h"
 
 #include <string>
 #include <vector>
@@ -30,7 +30,7 @@
 // Falls back to stub mode if libgpiod or /dev/gpiochip* is unavailable.
 // ============================================================================
 
-namespace fc::gpio {
+namespace dynamichardware::gpio {
 
 /// GPIO line direction
 enum class LineDirection : uint8_t {
@@ -55,10 +55,10 @@ struct GPIOLine {
     float        pwmDutyCycle{0.0f};// PWM duty cycle 0.0-1.0
 
     // PDO entry pointer (owned by this adapter, registered during init)
-    fc::pdo::PDOEntry* entry{nullptr};
+    dynamichardware::pdo::PDOEntry* entry{nullptr};
 };
 
-class GPIOAdapter final : public fc::pdo::IHardwareAdapter {
+class GPIOAdapter final : public dynamichardware::pdo::IHardwareAdapter {
 public:
     /// Construct with auto-detected board variant and chip path.
     GPIOAdapter();
@@ -72,7 +72,7 @@ public:
     void onBeforeReadInputs()  noexcept override;
     void onAfterWriteOutputs() noexcept override;
 
-    void setCatalog(fc::pdo::HardwareCatalog* catalog) noexcept { catalog_ = catalog; }
+    void setCatalog(dynamichardware::pdo::HardwareCatalog* catalog) noexcept { catalog_ = catalog; }
 
     /// Register a GPIO line and create a PDO entry for it.
     /// @param gpio_offset    GPIO line offset (BCM number, e.g., 17)
@@ -83,7 +83,7 @@ public:
     int registerLine(uint32_t gpio_offset,
                      LineDirection direction,
                      std::string name,
-                     fc::pdo::EntryType entryType);
+                     dynamichardware::pdo::EntryType entryType);
 
     /// Get the detected board variant.
     [[nodiscard]] BoardVariant boardVariant() const noexcept { return variant_; }
@@ -97,7 +97,7 @@ public:
 private:
     BoardVariant      variant_{BoardVariant::UNKNOWN};
     std::string       chipPath_;
-    fc::pdo::HardwareCatalog* catalog_{nullptr};
+    dynamichardware::pdo::HardwareCatalog* catalog_{nullptr};
     std::vector<GPIOLine> lines_;
     bool                stubMode_{false};
 
@@ -123,4 +123,4 @@ private:
     void closeChip() noexcept;
 };
 
-} // namespace fc::gpio
+} // namespace dynamichardware::gpio

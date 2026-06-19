@@ -1,6 +1,6 @@
 #pragma once
-#include "backends/pdo/IHardwareAdapter.h"
-#include "backends/ethercat/HardwareCatalog.h"
+#include "dynamichardware/pdo/IHardwareAdapter.h"
+#include "dynamichardware/pdo/HardwareCatalog.h"
 
 #include <string>
 #include <vector>
@@ -23,7 +23,7 @@
 // will be implemented when hardware is available.
 // ============================================================================
 
-namespace fc::spi {
+namespace dynamichardware::spi {
 
 struct SPIDevice {
     uint8_t  bus{0};
@@ -31,13 +31,13 @@ struct SPIDevice {
     uint32_t maxSpeedHz{1000000};
     uint8_t  mode{0};  // SPI mode (0-3)
     std::string name;
-    std::vector<fc::pdo::PDOEntry*> entries;
+    std::vector<dynamichardware::pdo::PDOEntry*> entries;
 };
 
-class SPIAdapter final : public fc::pdo::IHardwareAdapter {
+class SPIAdapter final : public dynamichardware::pdo::IHardwareAdapter {
 public:
     SPIAdapter(std::string busPath);
-    void setCatalog(fc::pdo::HardwareCatalog* catalog) noexcept { catalog_ = catalog; }
+    void setCatalog(dynamichardware::pdo::HardwareCatalog* catalog) noexcept { catalog_ = catalog; }
     ~SPIAdapter() override = default;
 
     bool initialize() override;
@@ -51,11 +51,11 @@ public:
     /// @return             Index of the created PDO in pdos_
     int registerDevice(uint8_t chipSelect,
                        std::string name,
-                       std::vector<fc::pdo::EntryType> entryTypes);
+                       std::vector<dynamichardware::pdo::EntryType> entryTypes);
 
 private:
     std::string busPath_;
-    fc::pdo::HardwareCatalog* catalog_{nullptr};
+    dynamichardware::pdo::HardwareCatalog* catalog_{nullptr};
     int spiFd_{-1};
     std::vector<SPIDevice> devices_;
 
@@ -63,4 +63,4 @@ private:
     bool transfer(uint8_t cs, const uint8_t* tx, uint8_t* rx, size_t len) noexcept;
 };
 
-} // namespace fc::spi
+} // namespace dynamichardware::spi

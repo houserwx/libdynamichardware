@@ -1,7 +1,7 @@
 #pragma once
-#include "backends/pdo/IHardwareAdapter.h"
-#include "backends/ethercat/HardwareCatalog.h"
-#include "backends/ethercat/SlaveTypeInfo.h"
+#include "dynamichardware/pdo/IHardwareAdapter.h"
+#include "dynamichardware/pdo/HardwareCatalog.h"
+#include "dynamichardware/backends/ethercat/SlaveTypeInfo.h"
 #include <vector>
 #include <atomic>
 #include <cstdint>
@@ -15,11 +15,11 @@ extern "C" {
 }
 #endif
 
-namespace fc::ethercat {
+namespace dynamichardware::ethercat {
 
 // ============================================================================
 // Config — EtherCAT-specific configuration loaded from hardware.json.
-// Provides per-UUID pulse/debounce overrides via the common::config::Config.
+// Provides per-UUID pulse/debounce overrides.
 // ============================================================================
 struct Config {
     // Master settings
@@ -80,7 +80,7 @@ struct EcEntryReg {
 // PDOEntry::image pointers inside pdos_[0].entries point into this buffer,
 // so no copy is needed between the IgH buffer and PDO::image.
 
-class EthercatAdapter final : public fc::pdo::IHardwareAdapter {
+class EthercatAdapter final : public dynamichardware::pdo::IHardwareAdapter {
 public:
     /// @param cycleNs  EtherCAT cycle period in nanoseconds (must match DC sync config).
     explicit EthercatAdapter(uint32_t cycleNs = 1'000'000u) noexcept
@@ -93,7 +93,7 @@ public:
     }
 
     /// Optionally attach a HardwareCatalog before calling initialize().
-    void setCatalog(fc::pdo::HardwareCatalog* catalog) noexcept { catalog_ = catalog; }
+    void setCatalog(dynamichardware::pdo::HardwareCatalog* catalog) noexcept { catalog_ = catalog; }
 
     /// Optionally attach the application Config before calling initialize().
     void setConfig(const Config* config) noexcept { config_ = config; }
@@ -141,7 +141,7 @@ private:
     struct { uint16_t wc_state{0}; uint16_t working_counter{0}; } lastDomainState_{};
 #endif
     uint32_t          cycleNs_;
-    fc::pdo::HardwareCatalog*  catalog_{nullptr};
+    dynamichardware::pdo::HardwareCatalog*  catalog_{nullptr};
     const Config*     config_{nullptr};
 
     int               nSlaves_{0};
@@ -155,4 +155,4 @@ private:
     void applyConfig();     ///< Applies pulse/debounce from Config to pdos_[0] entries
 };
 
-} // namespace fc::ethercat
+} // namespace dynamichardware::ethercat
