@@ -100,7 +100,7 @@ uint32_t gpioLineCount(BoardVariant variant) noexcept
         case BoardVariant::RASPBERRY_PI_4: return 54;
         case BoardVariant::RASPBERRY_PI_5: return 54;
         case BoardVariant::UNKNOWN:
-        default:                           return 54; // Default to BCM2711 count
+        default:                           return 0;  // No known GPIO controller
     }
 }
 

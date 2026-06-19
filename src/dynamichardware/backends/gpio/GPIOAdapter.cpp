@@ -46,6 +46,17 @@ bool GPIOAdapter::initialize()
         }
     }
 
+    // If board variant is still unknown, refuse to auto-discover GPIO lines.
+    // On non-embedded platforms (e.g. desktop Linux with gpio-mockup), the kernel
+    // may expose /dev/gpiochip0 but it is NOT a real Raspberry Pi GPIO controller.
+    // Auto-discovering 54 lines on such platforms causes catalog bloat and
+    // std::bad_alloc during catalog save.  Fail gracefully instead.
+    if (variant_ == BoardVariant::UNKNOWN) {
+        std::fprintf(stderr,
+                     "[GPIOAdapter] Not a recognized embedded platform — skipping GPIO backend\n");
+        return false;
+    }
+
   #if HAS_LIBGPIOD
     // Try to open real GPIO chip
     if (!openChip()) {

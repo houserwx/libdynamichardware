@@ -324,12 +324,18 @@ bool DynamicHardwareContext::build()
     }
 
     if (impl_->gpioAdapter) {
-        std::printf("[Context] Initializing GPIO backend...\n");
-        if (impl_->gpioAdapter->initialize()) {
-            impl_->registry.addBackend(std::move(impl_->gpioAdapter));
-            catalogChanged = true;
+        auto variant = impl_->gpioAdapter->boardVariant();
+        if (variant == gpio::BoardVariant::UNKNOWN) {
+            std::printf("[Context] Skipping GPIO backend — not a recognized embedded platform\n");
         } else {
-            std::printf("[Context] GPIO initialization failed\n");
+            std::printf("[Context] Initializing GPIO backend (%s)...\n",
+                        gpio::boardVariantName(variant).c_str());
+            if (impl_->gpioAdapter->initialize()) {
+                impl_->registry.addBackend(std::move(impl_->gpioAdapter));
+                catalogChanged = true;
+            } else {
+                std::printf("[Context] GPIO initialization failed\n");
+            }
         }
     }
 
