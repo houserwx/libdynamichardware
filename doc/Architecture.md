@@ -67,17 +67,34 @@
 
 ---
 
-## 5. Current Pain Points
+## 5. Terminology Note: PDO Collision Between Transports ⚠️
 
-- **GPIOAdapter** currently activates **all** discovered GPIO lines instead of only those with registered `PDOEntry`s.
-- The discovery-first approach makes it easy for the system (and LLMs) to assume "everything in catalog = everything active".
-- Lack of strong enforcement that activation must be driven by registered PDOs.
+The term **PDO** means different things at different layers:
 
-**Recommended Improvement**: In `GPIOAdapter::FreezeForRT()` (or equivalent), query the `HardwareRegistry` and only request/activate GPIO lines that have associated `PDOEntry`s.
+| Layer | Meaning | Contiguous? | Selection model |
+|---|---|---|---|
+| **EtherCAT transport** | Process Data Object — hardware-mapped DMA buffer on the bus, defined by slave EEPROM | **Yes** — one giant flat memory block across all slaves | Register ALL entries; you can't cherry-pick without breaking the layout |
+| **This library** (`pdo::PDO`) | Abstract container holding `entries[]` + `image[]`, used by every backend | Depends on backend | Backend decides how to populate |
+
+**Why EtherCAT is different from other backends:**
+- EtherCAT's process data IS a contiguous DMA region managed by IgH domain objects. Every slave's subindexes sit at fixed byte/bit offsets determined by the hardware. Reading it all in one shot has zero performance penalty — there's no per-entry syscall overhead.
+- GPIO, I2C, SPI, and simulated backends have NO such constraint. Each channel is an independent file read, register access, or synthetic value generation. They select only the channels the application explicitly registered.
+
+When reading code, "building PDOs" always refers to our library-level abstraction. The underlying transport may or may not use actual PDO mappings (EtherCAT does, everything else doesn't).
 
 ---
 
-**Document updated with your correction.**  
+## 6. Current Pain Points
+
+- **GPIORTBackend** currently activates **all** discovered GPIO lines instead of only those with registered `PDOEntry`s.
+- The discovery-first approach makes it easy for the system (and LLMs) to assume "everything in catalog = everything active".
+- Lack of strong enforcement that activation must be driven by registered PDOs.
+
+**Recommended Improvement**: In `GPIORTBackend::buildRT()` (or equivalent), query the registry and only request/activate GPIO lines that have associated `PDOEntry`s.
+
+---
+
+**Document updated with terminology clarification.**  
 The flow now accurately starts with **all backends scanning and populating the catalog**.
 
 Let me know if you want further adjustments, more detail on any class, or a diagram added.

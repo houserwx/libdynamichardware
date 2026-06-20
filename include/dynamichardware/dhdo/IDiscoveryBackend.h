@@ -21,7 +21,7 @@
 //     not concrete transport libraries (libgpiod, ethercat master, etc.).
 // ============================================================
 
-namespace dynamichardware::pdo {
+namespace dynamichardware::dhdo {
 
 class HardwareCatalog;
 
@@ -39,7 +39,7 @@ public:
 
     /// Scan hardware and populate the attached catalog with all available channels.
     /// This is a one-time call during build().  Returns true if at least one channel found.
-    /// Does NOT create PDOEntry objects or request hardware handles — pure catalog population.
+    /// Does NOT create DHDOEntry objects or request hardware handles — pure catalog population.
     [[nodiscard]] virtual bool discover() = 0;
 
 protected:
@@ -48,4 +48,4 @@ protected:
     HardwareCatalog* catalog_{nullptr};
 };
 
-} // namespace dynamichardware::pdo
+} // namespace dynamichardware::dhdo

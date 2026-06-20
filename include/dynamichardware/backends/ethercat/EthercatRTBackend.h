@@ -1,5 +1,5 @@
 #pragma once
-#include "dynamichardware/pdo/IRTBackend.h"
+#include "dynamichardware/dhdo/IRTBackend.h"
 #include <vector>
 #include <atomic>
 #include <cstdint>
@@ -54,8 +54,18 @@ struct Config {
 };
 
 /// ---- Internal PDO registration record ------------------------------------
-/// Holds the EtherCAT PDO geometry discovered during buildRT().
-/// Used to map IgH-managed offsets/bits into concrete PDOEntry structs.
+/// Holds the EtherCAT transport-level PDO geometry discovered during buildRT().
+///
+/// NOTE ON TERMINOLOGY:
+///   "PDO" means something different here vs our library's `dhdo::PDO` class.
+///   - EtherCAT PDO: Hardware-mapped contiguous DMA buffer across all slaves,
+///     defined by slave EEPROM. Every subindex sits at a fixed byte/bit offset.
+///     This is why we register ALL entries — reading the whole block has zero
+///     per-entry overhead (it's one memory copy from DMA).
+///   - Library PDO (`dhdo::PDO`): Transport-agnostic abstraction used by every
+///     backend. GPIO/I2C/SPI have no hardware PDO concept at all.
+///   Our `buildEntries()` walks regs_ and creates dhdo::PDOEntry objects that
+///   point into the IgH domain buffer, bridging the two concepts.
 struct EcEntryReg {
     uint16_t     slavePos;
     uint32_t     vendorId;
@@ -82,7 +92,7 @@ struct EcEntryReg {
 ///   3. onBeforeReadInputs()         — receive + process domain data into buffer
 ///   4. onAfterWriteOutputs()        — queue domain + send frames from buffer
 ///   5. Destructor                   — release master+domain
-class EthercatRTBackend final : public dynamichardware::pdo::IRTBackend {
+class EthercatRTBackend final : public dynamichardware::dhdo::IRTBackend {
 public:
     /// @param cycleNs  Cycle period in nanoseconds (must match DC sync configuration).
     explicit EthercatRTBackend(uint32_t cycleNs = 1'000'000u) noexcept
@@ -146,7 +156,7 @@ private:
 
     // Private helpers (all run within buildRT())
     bool discoverAndRegister();   ///< Scan slaves, create domain registrations → populate regs_
-    void buildEntries();          ///< Populate pdos_[0].entries from regs_ + domainData_
+    void buildEntries();          ///< Populate dhdos_[0].entries from regs_ + domainData_
     void applyConfig();           ///< Apply pulse/debounce from Config to entries
     bool waitForCommunication(uint32_t timeoutMs = 5000u);
 };

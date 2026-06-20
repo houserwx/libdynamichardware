@@ -1,11 +1,11 @@
 #pragma once
 
 // ============================================================================
-// PDOFactory.h — Creates and configures PDO / PDOEntry objects from
+// PDOFactory.h — Creates and configures PDO / DHDOEntry objects from
 // CatalogEntry records or explicit definitions.
 //
 // This is the HAL's factory: given a catalog entry (from hardware discovery
-// or a persisted catalog file), it produces a PDOEntry with the correct
+// or a persisted catalog file), it produces a DHDOEntry with the correct
 // EntryType, pulse/debounce parameters, and UUID binding.
 //
 // Usage:
@@ -14,32 +14,32 @@
 //   auto entry = PDOFactory::create(entryType, uuid, pulseMs, debounceMs);
 // ============================================================================
 
-#include "dynamichardware/pdo/PDO.h"
-#include "dynamichardware/pdo/HardwareCatalog.h"
+#include "dynamichardware/dhdo/DHDO.h"
+#include "dynamichardware/dhdo/HardwareCatalog.h"
 
-namespace dynamichardware::pdo {
+namespace dynamichardware::dhdo {
 
-class PDOFactory {
+class DHDOFactory {
 public:
     // ---- Construction from CatalogEntry (discovery-driven) ----
 
-    /// Create a PDOEntry from a HardwareCatalog::CatalogEntry.
+    /// Create a DHDOEntry from a HardwareCatalog::CatalogEntry.
     /// Maps channelType strings to EntryType enum values.
     /// Applies pulse/debounce from the entry's SimParams if present.
     /// @param ce   Catalog entry (from HardwareCatalog)
-    /// @return     Configured PDOEntry
-    [[nodiscard]] static PDOEntry fromCatalogEntry(const CatalogEntry& ce);
+    /// @return     Configured DHDOEntry
+    [[nodiscard]] static DHDOEntry fromCatalogEntry(const CatalogEntry& ce);
 
     // ---- Explicit construction (config-driven) ----
 
-    /// Create a PDOEntry with explicit parameters.
+    /// Create a DHDOEntry with explicit parameters.
     /// @param type       Entry type (digital, encoder, analog, etc.)
     /// @param uuid       Stable UUID for this channel
     /// @param pulseMs    Pulse duration in ms for output types (0 = latched)
     /// @param debounceMs Debounce duration in ms for input types (0 = disabled)
     /// @param bitLength  Bit width in process image (1, 16, 32, etc.)
-    /// @return           Configured PDOEntry
-    [[nodiscard]] static PDOEntry create(
+    /// @return           Configured DHDOEntry
+    [[nodiscard]] static DHDOEntry create(
         EntryType  type,
         std::string uuid,
         uint32_t   pulseMs   = 0,
@@ -64,4 +64,4 @@ public:
     [[nodiscard]] static uint8_t defaultBitLength(EntryType type);
 };
 
-} // namespace dynamichardware::pdo
+} // namespace dynamichardware::dhdo

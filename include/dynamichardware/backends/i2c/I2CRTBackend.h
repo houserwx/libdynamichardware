@@ -1,5 +1,5 @@
 #pragma once
-#include "dynamichardware/pdo/IRTBackend.h"
+#include "dynamichardware/dhdo/IRTBackend.h"
 
 #include <string>
 #include <vector>
@@ -12,7 +12,7 @@ namespace dynamichardware::i2c {
 ///
 /// Fully independent of discovery: acquires its own resources in buildRT(),
 /// registers devices via registerDevice() (called by DynamicHardwareContext), builds PDOs from scratch.
-class I2CRTBackend final : public dynamichardware::pdo::IRTBackend {
+class I2CRTBackend final : public dynamichardware::dhdo::IRTBackend {
 public:
     explicit I2CRTBackend(std::string busPath);
     ~I2CRTBackend() override = default;
@@ -25,14 +25,14 @@ public:
     /// Register an I2C device before calling buildRT(). Returns device index.
     /// Called by DynamicHardwareContext during consumer configuration phase — NOT by external consumers directly.
     int registerDevice(uint8_t deviceAddr, std::string name,
-                       std::vector<dynamichardware::pdo::EntryType> entryTypes);
+                       std::vector<dynamichardware::dhdo::EntryType> entryTypes);
 
 private:
     struct Device {
         uint8_t  bus{0};
         uint8_t  address{0};
         std::string name;
-        std::vector<dynamichardware::pdo::PDOEntry*> entries;
+        std::vector<dynamichardware::dhdo::DHDOEntry*> entries;
     };
 
     std::string busPath_;

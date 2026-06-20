@@ -57,20 +57,28 @@ int main()
     }
 
     // ------------------------------------------------------------------
-    // Step 2: Build the DynamicHardwareContext with the simulation backend.
+    // Step 2: Discover hardware using the factory API.
     // ------------------------------------------------------------------
-    auto ctx = DynamicHardwareContext::builder()
-        .catalogPath("hardware.json")
-        .withSimulation("SimulatedAdapterDefinitions.json")
-        .build();
+    DynamicHardwareContextFactory factory;
+    factory.catalogPath("hardware.json")
+           .withSimulation("SimulatedAdapterDefinitions.json");
 
-    if (!ctx || !ctx->build()) {
-        std::fprintf(stderr, "[Demo] Context build failed\n");
+    if (!factory.discover()) {
+        std::fprintf(stderr, "[Demo] Discovery failed\n");
         return 1;
     }
 
     // ------------------------------------------------------------------
-    // Step 3: Freeze PDOs — locks catalog for RT operation.
+    // Step 3: Build RT context from discovered data.
+    // ------------------------------------------------------------------
+    auto ctx = factory.buildRT();
+    if (!ctx) {
+        std::fprintf(stderr, "[Demo] RT context build failed\n");
+        return 1;
+    }
+
+    // ------------------------------------------------------------------
+    // Step 4: Freeze — locks entries for RT operation.
     // ------------------------------------------------------------------
     if (!ctx->freeze()) {
         std::fprintf(stderr, "[Demo] Context freeze failed\n");
@@ -89,13 +97,13 @@ int main()
     // Step 4: Cache entry pointers (init-time lookups before RT loop).
     //         In a real application you'd store these in your controller class.
     // ------------------------------------------------------------------
-    pdo::PDOEntry* limitSwitch   = ctx->lookupByName("LimitSwitch-A");
-    pdo::PDOEntry* encoderPos    = ctx->lookupByName("Encoder-Position");
-    pdo::PDOEntry* tempSensor    = ctx->lookupByName("Temperature-Sensor");
+    dhdo::DHDOEntry* limitSwitch   = ctx->lookupByName("LimitSwitch-A");
+    dhdo::DHDOEntry* encoderPos    = ctx->lookupByName("Encoder-Position");
+    dhdo::DHDOEntry* tempSensor    = ctx->lookupByName("Temperature-Sensor");
 
-    pdo::PDOEntry* relayPump     = ctx->lookupByName("Relay-Pump");
-    pdo::PDOEntry* dacVoltage    = ctx->lookupByName("DAC-Voltage");
-    pdo::PDOEntry* speedSetpoint = ctx->lookupByName("PID-Speed-Setpoint");
+    dhdo::DHDOEntry* relayPump     = ctx->lookupByName("Relay-Pump");
+    dhdo::DHDOEntry* dacVoltage    = ctx->lookupByName("DAC-Voltage");
+    dhdo::DHDOEntry* speedSetpoint = ctx->lookupByName("PID-Speed-Setpoint");
 
     if (!limitSwitch || !encoderPos || !tempSensor ||
         !relayPump   || !dacVoltage || !speedSetpoint) {

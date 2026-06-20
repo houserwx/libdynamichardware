@@ -1,5 +1,5 @@
 #pragma once
-#include "dynamichardware/pdo/IDiscoveryBackend.h"
+#include "dynamichardware/dhdo/IDiscoveryBackend.h"
 
 #include <string>
 
@@ -24,7 +24,7 @@
 
 namespace dynamichardware::simulated {
 
-class SimulatedDiscovery final : public dynamichardware::pdo::IDiscoveryBackend {
+class SimulatedDiscovery final : public dynamichardware::dhdo::IDiscoveryBackend {
 public:
     explicit SimulatedDiscovery(std::string definitionsPath);
     ~SimulatedDiscovery() override = default;

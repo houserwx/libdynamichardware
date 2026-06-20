@@ -1,5 +1,5 @@
 #pragma once
-#include "dynamichardware/pdo/IRTBackend.h"
+#include "dynamichardware/dhdo/IRTBackend.h"
 
 #include <string>
 #include <vector>
@@ -10,14 +10,17 @@ namespace dynamichardware::simulated {
 /// ---- SimulatedRTBackend --------------------------------------------------
 /// Real-time simulated I/O backend. Implements IRTBackend.
 ///
-/// Fully independent of discovery: reads catalog entries discovered by
-/// SimulatedDiscovery, builds PDOs + simulation state from scratch in buildRT().
+/// Fully independent of discovery: parses JSON simdefs directly and builds
+/// PDOs + simulation state from scratch in buildRT(). Same source file that
+/// SimulatedDiscovery reads for catalog population, but RT backend owns its own data.
 /// Generates synthetic waveforms (square-wave toggle, linear increment, sinusoidal)
 /// in onBeforeReadInputs() — no real hardware involved.
-class SimulatedRTBackend final : public dynamichardware::pdo::IRTBackend {
+class SimulatedRTBackend final : public dynamichardware::dhdo::IRTBackend {
 public:
     explicit SimulatedRTBackend(std::string definitionsPath);
     ~SimulatedRTBackend() override = default;
+
+    [[nodiscard]] const std::string& definitionsPath() const noexcept { return definitionsPath_; }
 
     // --- IRTBackend implementation ------------------------------------------
     [[nodiscard]] bool buildRT() override;
@@ -26,7 +29,7 @@ public:
 
 private:
     struct SimState {
-        dynamichardware::pdo::EntryType type{dynamichardware::pdo::EntryType::BoolInput};
+        dynamichardware::dhdo::EntryType type{dynamichardware::dhdo::EntryType::BoolInput};
         uint32_t  byteOffset{0};
 
         // Bool: periodic square-wave toggle state machine
@@ -49,13 +52,29 @@ private:
         float     floatOffset{0.0f};         ///< DC offset added to sine output
     };
 
-    std::string definitionsPath_;
-    uint32_t                  cycleNs_{500'000};
-    double                    cycleNsD_{500'000.0};
-    std::vector<SimState> simStates_;
+    struct SimChannelDef {
+        std::string                        uuid;
+        dynamichardware::dhdo::EntryType   type{dynamichardware::dhdo::EntryType::BoolInput};
+        bool                               isOutput{false};
+        uint32_t                           togglePeriodMs{100};
+        float                              dutyCyclePercent{50.0f};
+        int32_t                            incrementPerCycle{1};
+        int64_t                            minValue{INT64_MIN};
+        int64_t                            maxValue{INT64_MAX};
+        float                              amplitude{1.0f};
+        double                             frequencyHz{1.0};
+        float                              offset{0.0f};
+        uint32_t                           debounceMs{0};
+        uint32_t                           pulseMs{0};
+    };
 
-    /// Read JSON definitions and extract cycle time + simulated entries from catalog_.
-    bool loadDefinitions() noexcept;
+    std::string                    definitionsPath_;
+    uint32_t                       cycleNs_{500'000};
+    double                         cycleNsD_{500'000.0};
+    std::vector<SimState>          simStates_;
+
+    /// Parse JSON definitions and extract cycle time + channel entries into outChannels.
+    bool loadDefinitions(std::vector<SimChannelDef>& outChannels) noexcept;
 };
 
 } // namespace dynamichardware::simulated

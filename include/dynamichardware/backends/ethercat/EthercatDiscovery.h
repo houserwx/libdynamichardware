@@ -1,5 +1,5 @@
 #pragma once
-#include "dynamichardware/pdo/IDiscoveryBackend.h"
+#include "dynamichardware/dhdo/IDiscoveryBackend.h"
 #include <cstdint>
 
 // Guard IgH EtherCAT headers — only available when libethercat is installed.
@@ -23,7 +23,7 @@ namespace dynamichardware::ethercat {
 ///   2. discover()                    — acquire master, create domain, walk slaves,
 ///                                      register entries in catalog, release all resources.
 ///   3. Object destroyed or reset()   — cleanup (idempotent).
-class EthercatDiscovery final : public dynamichardware::pdo::IDiscoveryBackend {
+class EthercatDiscovery final : public dynamichardware::dhdo::IDiscoveryBackend {
 public:
     /// @param cycleNs  Cycle period in nanoseconds used for DC sync configuration hints.
     explicit EthercatDiscovery(uint32_t cycleNs = 1'000'000u) noexcept

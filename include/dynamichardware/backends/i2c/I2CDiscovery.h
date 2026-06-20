@@ -1,5 +1,5 @@
 #pragma once
-#include "dynamichardware/pdo/IDiscoveryBackend.h"
+#include "dynamichardware/dhdo/IDiscoveryBackend.h"
 
 #include <string>
 
@@ -22,7 +22,7 @@
 
 namespace dynamichardware::i2c {
 
-class I2CDiscovery final : public dynamichardware::pdo::IDiscoveryBackend {
+class I2CDiscovery final : public dynamichardware::dhdo::IDiscoveryBackend {
 public:
     explicit I2CDiscovery(std::string busPath);
     ~I2CDiscovery() override = default;

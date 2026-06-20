@@ -1,6 +1,7 @@
 #include "dynamichardware/backends/ethercat/EthercatRTBackend.h"
-#include "dynamichardware/pdo/HardwareCatalog.h"
+#include "dynamichardware/dhdo/HardwareCatalog.h"
 #include "dynamichardware/backends/ethercat/SlaveTypeInfo.h"
+#include "dynamichardware/backends/ethercat/EthercatEntryKey.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -83,12 +84,12 @@ bool EthercatRTBackend::buildRT()
         return false;
     }
 
-    // 6. Build PDOEntry structs in pdos_[0] from discovered entries + apply config
+    // 6. Build PDOEntry structs in dhdos_[0] from discovered entries + apply config
     buildEntries();
     applyConfig();
 
     std::printf("[EtherCAT] Ready: %d slave(s), %zu PDO entries, cycleNs=%u\n",
-                nSlaves_, pdos_.empty() ? 0u : pdos_[0].entries.size(), cycleNs_);
+                nSlaves_, dhdos_.empty() ? 0u : dhdos_[0].entries.size(), cycleNs_);
 
     // 7. Wait for all slaves to reach WC_COMPLETE
     std::printf("[EtherCAT] Waiting for slaves to reach OP state...\n");
@@ -194,12 +195,11 @@ bool EthercatRTBackend::discoverAndRegister()
                     r.pdoSubindex = entry.subindex;
                     r.bitLength   = entry.bit_length;
                     r.isOutput    = isOutput;
-                    r.uuid        = std::string(
-                        "EC|") + std::to_string(si.vendor_id) +
-                                   "|" + std::to_string(si.product_code) +
-                                   "|POS" + std::to_string(pos) +
-                                   "|" + std::to_string(entry.index) +
-                                   ":" + std::to_string(entry.subindex);
+                    // Single source of truth — guaranteed to match discovery keys.
+                    r.uuid        = buildEntryKey(
+                        si.vendor_id, si.product_code,
+                        isOutput, entry.bit_length,
+                        pos, entry.index, entry.subindex);
 
                     regs_.push_back(r);
                 }
@@ -245,21 +245,21 @@ bool EthercatRTBackend::discoverAndRegister()
 }
 
 // ---------------------------------------------------------------------------
-// buildEntries() — populate pdos_[0].entries from regs_ + domainData_ buffer.
+// buildEntries() — populate dhdos_[0].entries from regs_ + domainData_ buffer.
 // Entry image pointers point directly into the IgH-managed buffer (zero-copy).
 // ---------------------------------------------------------------------------
 
 void EthercatRTBackend::buildEntries()
 {
-    pdos_.resize(1);
-    pdos_[0].entries.reserve(regs_.size());
+    dhdos_.resize(1);
+    dhdos_[0].entries.reserve(regs_.size());
 
     for (const auto& r : regs_) {
-        dynamichardware::pdo::EntryType type;
-        if      (r.bitLength == 1U  && !r.isOutput) { type = dynamichardware::pdo::EntryType::BoolInput;     }
-        else if (r.bitLength == 1U  &&  r.isOutput) { type = dynamichardware::pdo::EntryType::BoolOutput;    }
-        else if (r.bitLength == 32U && !r.isOutput) { type = dynamichardware::pdo::EntryType::Int32Input;    }
-        else if (r.bitLength == 16U && !r.isOutput) { type = dynamichardware::pdo::EntryType::Int16Input;    }
+        dynamichardware::dhdo::EntryType type;
+        if      (r.bitLength == 1U  && !r.isOutput) { type = dynamichardware::dhdo::EntryType::BoolInput;     }
+        else if (r.bitLength == 1U  &&  r.isOutput) { type = dynamichardware::dhdo::EntryType::BoolOutput;    }
+        else if (r.bitLength == 32U && !r.isOutput) { type = dynamichardware::dhdo::EntryType::Int32Input;    }
+        else if (r.bitLength == 16U && !r.isOutput) { type = dynamichardware::dhdo::EntryType::Int16Input;    }
         else {
             continue; // Unsupported width — registered in domain, not yet wrapped as typed entry
         }
@@ -270,19 +270,19 @@ void EthercatRTBackend::buildEntries()
                     r.bitLength, r.offset, r.bitPos,
                     r.pdoIndex, r.pdoSubindex);
 
-        dynamichardware::pdo::PDOEntry e{};
+        dynamichardware::dhdo::DHDOEntry e{};
         e.image      = domainData_ + r.offset;          // direct into IgH buffer
         e.byteOffset = r.offset;                        // retained for reference
         e.bitOffset  = static_cast<uint8_t>(r.bitPos);
         e.bitLength  = r.bitLength;
         e.uuid       = r.uuid;
         e.type       = type;
-        pdos_[0].entries.push_back(e);
+        dhdos_[0].entries.push_back(e);
     }
 
     // PDO::image is empty — domainData_ is IgH-managed.
     // freeze() sees image.empty() and leaves entry image pointers untouched.
-    pdos_[0].freeze();
+    dhdos_[0].freeze();
 }
 
 // ---------------------------------------------------------------------------
@@ -359,7 +359,7 @@ void EthercatRTBackend::onAfterWriteOutputs() noexcept
 }
 
 // ---------------------------------------------------------------------------
-// applyConfig() — applies pulse/debounce from Config to pdos_[0] entries.
+// applyConfig() — applies pulse/debounce from Config to dhdos_[0] entries.
 // Called once during buildRT(); never in the RT loop.
 // ---------------------------------------------------------------------------
 
@@ -383,7 +383,7 @@ void EthercatRTBackend::applyConfig()
         auto it = uuidMap.find(reg.uuid);
         if (it == uuidMap.end()) continue;
 
-        for (auto& e : pdos_[0].entries) {
+        for (auto& e : dhdos_[0].entries) {
             if (e.uuid.empty() || e.uuid != reg.uuid) continue;
 
             if (reg.isOutput) {

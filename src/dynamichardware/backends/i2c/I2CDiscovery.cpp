@@ -1,5 +1,7 @@
 #include "dynamichardware/backends/i2c/I2CDiscovery.h"
 
+#include "dynamichardware/dhdo/HardwareCatalog.h"
+
 #include <cstdio>
 #include <fstream>
 

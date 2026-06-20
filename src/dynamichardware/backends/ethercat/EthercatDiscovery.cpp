@@ -1,23 +1,12 @@
 #include "dynamichardware/backends/ethercat/EthercatDiscovery.h"
-#include "dynamichardware/pdo/HardwareCatalog.h"
+#include "dynamichardware/dhdo/HardwareCatalog.h"
 #include "dynamichardware/backends/ethercat/SlaveTypeInfo.h"
+#include "dynamichardware/backends/ethercat/EthercatEntryKey.h"
 
 #include <cstdio>
 #include <thread>
 
 namespace dynamichardware::ethercat {
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-static const char* inferChannelType(uint8_t bitLength, bool isOutput) noexcept {
-    if (bitLength == 1U && !isOutput) { return "DigitalInput";  }
-    if (bitLength == 1U &&  isOutput) { return "DigitalOutput"; }
-    if (bitLength == 32U && !isOutput) { return "Encoder";       }
-    if (bitLength == 16U && !isOutput) { return "AnalogInput";   }
-    return "Raw";
-}
 
 // ---------------------------------------------------------------------------
 // discover() — IDiscoveryBackend implementation
@@ -145,16 +134,25 @@ bool EthercatDiscovery::discoverSlaves()
                     if (entry.index == 0) continue; // padding / gap entry
 
                     if (catalog_ != nullptr) {
+                        // Single source of truth for key construction — guaranteed to match RT backend.
+                        std::string k = buildEntryKey(
+                            si.vendor_id, si.product_code,
+                            isOutput, entry.bit_length,
+                            pos, entry.index, entry.subindex);
+
+                        // Build human-readable names from slave info or raw EEPROM data
+                        std::string slaveName;
+                        if (sti != nullptr) {
+                            slaveName = sti->type_name;
+                        } else {
+                            slaveName = static_cast<const char*>(si.name);
+                        }
+                        std::string chanName = slaveName + " ch" + std::to_string(entry.subindex);
+
                         const char* ctype = inferChannelType(entry.bit_length, isOutput);
-                        catalog_->addEntry(dynamichardware::pdo::CatalogEntry{
-                            catalog_->getOrCreateUuid(
-                                "EC|" + std::to_string(si.vendor_id) +
-                                "|" + std::to_string(si.product_code) +
-                                "|POS" + std::to_string(pos) +
-                                "|" + std::to_string(entry.index) +
-                                ":" + std::to_string(entry.subindex)),
-                            "", ctype, "",
-                            (sti != nullptr) ? sti->type_name : "unknown",
+                        catalog_->addEntry(dynamichardware::dhdo::CatalogEntry{
+                            k, "", ctype, chanName,
+                            slaveName,
                             pos, si.product_code, si.revision_number,
                             entry.index, entry.subindex, isOutput
                         });

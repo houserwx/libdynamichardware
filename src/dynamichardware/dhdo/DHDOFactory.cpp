@@ -1,16 +1,16 @@
-#include "dynamichardware/pdo/PDOFactory.h"
+#include "dynamichardware/dhdo/DHDOFactory.h"
 
 #include <algorithm>
 #include <cstddef>
 
-namespace dynamichardware::pdo {
+namespace dynamichardware::dhdo {
 
 // ============================================================================
-// fromCatalogEntry — discovery-driven PDOEntry creation
+// fromCatalogEntry — discovery-driven DHDOEntry creation
 // ============================================================================
-PDOEntry PDOFactory::fromCatalogEntry(const CatalogEntry& ce)
+DHDOEntry DHDOFactory::fromCatalogEntry(const CatalogEntry& ce)
 {
-    PDOEntry entry{};
+    DHDOEntry entry{};
     entry.type       = stringToEntryType(ce.channelType);
     entry.uuid       = ce.uuid;
     entry.bitLength  = static_cast<uint8_t>(defaultBitLength(entry.type));
@@ -29,16 +29,16 @@ PDOEntry PDOFactory::fromCatalogEntry(const CatalogEntry& ce)
 }
 
 // ============================================================================
-// create — explicit config-driven PDOEntry creation
+// create — explicit config-driven DHDOEntry creation
 // ============================================================================
-PDOEntry PDOFactory::create(
+DHDOEntry DHDOFactory::create(
     EntryType  type,
     std::string uuid,
     uint32_t   pulseMs,
     uint32_t   debounceMs,
     uint8_t    bitLength)
 {
-    PDOEntry entry{};
+    DHDOEntry entry{};
     entry.type       = type;
     entry.uuid       = std::move(uuid);
     entry.bitLength  = bitLength ? bitLength : static_cast<uint8_t>(defaultBitLength(type));
@@ -55,7 +55,7 @@ PDOEntry PDOFactory::create(
 // human readability. This function maps them to the transport-agnostic
 // value type based on the data format in the process image.
 // ============================================================================
-EntryType PDOFactory::stringToEntryType(const std::string& channelType)
+EntryType DHDOFactory::stringToEntryType(const std::string& channelType)
 {
     // Case-insensitive comparison helper
     auto icmp = [](const std::string& a, const char* b) {
@@ -114,7 +114,7 @@ EntryType PDOFactory::stringToEntryType(const std::string& channelType)
 // ============================================================================
 // entryTypeToString — EntryType → string (composited from bitmask fields)
 // ============================================================================
-const char* PDOFactory::entryTypeToString(EntryType type)
+const char* DHDOFactory::entryTypeToString(EntryType type)
 {
     // Static buffer for dynamic composition (not RT-safe, but this is init-time only)
     static char buf[32];
@@ -159,7 +159,7 @@ const char* PDOFactory::entryTypeToString(EntryType type)
 // defaultBitLength — EntryType → bit width in process image
 // Derived from the bitmask size field — no switch needed.
 // ============================================================================
-uint8_t PDOFactory::defaultBitLength(EntryType type)
+uint8_t DHDOFactory::defaultBitLength(EntryType type)
 {
     if (entryIsMessage(type)) return 0;
 
@@ -172,4 +172,4 @@ uint8_t PDOFactory::defaultBitLength(EntryType type)
     }
 }
 
-} // namespace dynamichardware::pdo
+} // namespace dynamichardware::dhdo

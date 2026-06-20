@@ -1,12 +1,12 @@
 #include <catch2/catch_test_macros.hpp>
 #include <climits>
 #include <cmath>
-#include <dynamichardware/pdo/HardwareCatalog.h>
+#include <dynamichardware/dhdo/HardwareCatalog.h>
 #include <filesystem>
 #include <fstream>
 #include <chrono>
 
-using namespace dynamichardware::pdo;
+using namespace dynamichardware::dhdo;
 
 // ============================================================================
 // HardwareCatalog save/load
@@ -70,16 +70,17 @@ TEST_CASE("HardwareCatalog entries vector is accessible", "[catalog]")
     for (int i = 0; i < 3; i++) {
         CatalogEntry entry;
         entry.key         = "EC|test|00000000|REV00000000|POS0001|0010:" + std::to_string(i);
-        entry.uuid        = "uuid-" + std::to_string(i);
         entry.channelType = "Test";
+        // NOTE: addEntry() forces .uuid == .key (identity system)
         catalog.addEntry(std::move(entry));
     }
 
     auto& entries = catalog.entries();
     CHECK(entries.size() == 3);
-    CHECK(entries[0].uuid == "uuid-0");
-    CHECK(entries[1].uuid == "uuid-1");
-    CHECK(entries[2].uuid == "uuid-2");
+    // uuid equals key per identity system
+    CHECK(entries[0].uuid == "EC|test|00000000|REV00000000|POS0001|0010:0");
+    CHECK(entries[1].uuid == "EC|test|00000000|REV00000000|POS0001|0010:1");
+    CHECK(entries[2].uuid == "EC|test|00000000|REV00000000|POS0001|0010:2");
 }
 
 TEST_CASE("HardwareCatalog lookup returns correct entry", "[catalog]")
@@ -88,13 +89,13 @@ TEST_CASE("HardwareCatalog lookup returns correct entry", "[catalog]")
 
     CatalogEntry entry;
     entry.key         = "EC|lookup|00000000|REV00000000|POS0001|0010:01";
-    entry.uuid        = "lookup-uuid-123";
     entry.channelType = "DigitalInput";
+    // NOTE: addEntry() forces .uuid == .key (identity system)
     catalog.addEntry(std::move(entry));
 
     auto* found = catalog.findByKey("EC|lookup|00000000|REV00000000|POS0001|0010:01");
     REQUIRE(found != nullptr);
-    CHECK(found->uuid == "lookup-uuid-123");
+    CHECK(found->uuid == found->key);  // uuid equals key per identity system
     CHECK(found->channelType == "DigitalInput");
 
     // Non-existent key

@@ -1,5 +1,5 @@
 #pragma once
-#include "dynamichardware/pdo/PDO.h"
+#include "dynamichardware/dhdo/DHDO.h"
 #include <cstddef>
 #include <memory>
 #include <vector>
@@ -9,7 +9,7 @@
 //
 // RT DESIGN PATTERN: Virtual Dispatch at Backend Level (The Exception)
 // Only 2 virtual calls PER BACKEND PER CYCLE.
-// Per-entry read/write is concrete (PDOEntry::read/write).
+// Per-entry read/write is concrete (DHDOEntry::read/write).
 //
 // This interface owns the frozen PDO vector and provides the two RT hooks.
 // Discovery is a separate concern handled by IDiscoveryBackend.
@@ -27,12 +27,12 @@
 //   - Interface Segregation: this interface only contains methods relevant to the frozen RT loop.
 //     Discovery (catalog population) lives in IDiscoveryBackend — transient init-time concern.
 //     A backend's discovery object can be destroyed before freeze without affecting RT operation.
-//   - pdos_ ownership: protected for subclass mutation during buildRT()/activate().
+//   - dhdos_ ownership: protected for subclass mutation during buildRT()/activate().
 //     Consumers never manipulate PDOs directly — they interact through DynamicHardwareContext/PDOFactory.
 //     const accessor prevents accidental mutation from external code.
 // ============================================================
 
-namespace dynamichardware::pdo {
+namespace dynamichardware::dhdo {
 
 class IRTBackend {
 public:
@@ -70,14 +70,14 @@ protected:
     // External consumers never manipulate PDOs directly — they go through DynamicHardwareContext/PDOFactory.
     // Registry accesses via friendship for mutable RT sweep iteration and freeze verification.
     friend class HardwareRegistry;
-    std::vector<PDO> pdos_;
+    std::vector<DHDO> dhdos_;
 
 public:
     // --- Accessors ----------------------------------------------------------
 
     /// Const accessor for reading PDO structure (debug, verification).
     /// External consumers never manipulate PDOs directly — they go through DynamicHardwareContext/PDOFactory.
-    [[nodiscard]] const std::vector<PDO>& getPDOs() const noexcept { return pdos_; }
+    [[nodiscard]] const std::vector<DHDO>& getDHDOS() const noexcept { return dhdos_; }
 };
 
-} // namespace dynamichardware::pdo
+} // namespace dynamichardware::dhdo

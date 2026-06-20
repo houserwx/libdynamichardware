@@ -77,7 +77,7 @@ bool GPIORTBackend::buildRT()
 
     // Build PDO from registered lines only.
     {
-        dynamichardware::pdo::PDO pdo;
+        dynamichardware::dhdo::DHDO pdo;
         for (auto& line : lines_) {
             if (line.entry) {
                 pdo.entries.push_back(*line.entry);
@@ -89,7 +89,7 @@ bool GPIORTBackend::buildRT()
             for (size_t i = 0; i < pdo.entries.size(); ++i) {
                 pdo.entries[i].image = pdo.image.data() + i;
             }
-            pdos_.push_back(std::move(pdo));
+            dhdos_.push_back(std::move(pdo));
         }
     }
 
@@ -108,18 +108,21 @@ void GPIORTBackend::deferredActivate()
 
 // ---------------------------------------------------------------------------
 // registerLine() — consumer calls this before buildRT() to select GPIO pins.
+// The structured key matches what GPIODiscovery registers in the catalog:
+//   "GPIO|00|{gpio_offset}"
+// This ensures DHDOEntry.uuid == CatalogEntry.key for lookup resolution.
 // ---------------------------------------------------------------------------
 int GPIORTBackend::registerLine(uint32_t gpio_offset, LineDirection direction,
-                                 std::string name, dynamichardware::pdo::EntryType entryType)
+                                 std::string name, dynamichardware::dhdo::EntryType entryType)
 {
     GPIOLine line{};
     line.offset     = gpio_offset;
     line.direction  = direction;
     line.name       = std::move(name);
 
-    dynamichardware::pdo::PDOEntry entry{};
+    dynamichardware::dhdo::DHDOEntry entry{};
     entry.type      = entryType;
-    entry.uuid      = "GPIO|" + std::to_string(gpio_offset);
+    entry.uuid      = "GPIO|00|" + std::to_string(gpio_offset);  // Matches catalog discovery key
     line.entry      = &entry;
 
     const int idx = static_cast<int>(lines_.size());

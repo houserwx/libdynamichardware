@@ -1,5 +1,5 @@
 #include "dynamichardware/backends/gpio/GPIODiscovery.h"
-#include "dynamichardware/pdo/HardwareCatalog.h"
+#include "dynamichardware/dhdo/HardwareCatalog.h"
 
 #include <cstdio>
 #include <fcntl.h>
@@ -35,7 +35,7 @@ void GPIODiscovery::reset() noexcept
 
 // ---------------------------------------------------------------------------
 // discover() — open chip → scan lines → populate catalog → release chip.
-// Pure discovery: no PDOEntry objects or hardware handles survive this call.
+// Pure discovery: no DHDOEntry objects or hardware handles survive this call.
 // ---------------------------------------------------------------------------
 bool GPIODiscovery::discover()
 {
@@ -91,10 +91,10 @@ bool GPIODiscovery::discover()
 #endif
 
         // Register in catalog as available bidirectional pin.
+        // key IS the identifier — addEntry will set .uuid == .key automatically.
         if (catalog_) {
-            dynamichardware::pdo::CatalogEntry catEntry{};
+            dynamichardware::dhdo::CatalogEntry catEntry{};
             catEntry.key         = "GPIO|00|" + std::to_string(i);
-            catEntry.uuid        = "GPIO|" + std::to_string(i);
             catEntry.channelType = "DigitalIO";
             catEntry.slaveName   = variant_ == BoardVariant::RASPBERRY_PI_5 ? "BCM2712" :
                                    variant_ == BoardVariant::RASPBERRY_PI_4 ? "BCM2711" : "GPIO";

@@ -1,5 +1,5 @@
 #pragma once
-#include "dynamichardware/pdo/IRTBackend.h"
+#include "dynamichardware/dhdo/IRTBackend.h"
 #include <cstddef>
 #include <memory>
 #include <string>
@@ -7,7 +7,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace dynamichardware::pdo {
+namespace dynamichardware::dhdo {
 
 // ============================================================
 // HardwareRegistry — owns backends, orchestrates the RT cycle,
@@ -20,7 +20,7 @@ namespace dynamichardware::pdo {
 //
 // Lifecycle:
 //   1. addBackend()     — register hardware backends.
-//   2. buildUuidMap()   — build UUID → PDOEntry* map so that
+//   2. buildUuidMap()   — build UUID → DHDOEntry* map so that
 //                         Queue::loadFromJson() can call lookupByUuid().
 //                         addBackend() is still permitted after this
 //                         call (GrpcAdapters are added during queue
@@ -46,15 +46,15 @@ public:
     // Transfer ownership of a backend. Must be called before freezeForRt().
     void addBackend(std::unique_ptr<IRTBackend> adapter);
 
-    // Build the UUID → PDOEntry* map from all currently registered backends.
+    // Build the UUID → DHDOEntry* map from all currently registered backends.
     void buildUuidMap();
 
     // Freeze all backend PDOs and rebuild UUID map.
     void freezeForRt();
 
     // --- Init-time UUID lookup (NOT RT-safe) ------------------------
-    [[nodiscard]] PDOEntry*       lookupByUuid(std::string_view uuid) noexcept;
-    [[nodiscard]] const PDOEntry* lookupByUuid(std::string_view uuid) const noexcept;
+    [[nodiscard]] DHDOEntry*       lookupByUuid(std::string_view uuid) noexcept;
+    [[nodiscard]] const DHDOEntry* lookupByUuid(std::string_view uuid) const noexcept;
 
     // --- RT cycle (noexcept) — call in order each cycle -------------
     void readAll() noexcept;
@@ -94,8 +94,8 @@ private:
     }
 
     std::vector<std::unique_ptr<IRTBackend>> backends_;
-    std::unordered_map<std::string, PDOEntry*>     uuidMap_;
+    std::unordered_map<std::string, DHDOEntry*>     uuidMap_;
     bool                                            frozen_{false};
 };
 
-} // namespace dynamichardware::pdo
+} // namespace dynamichardware::dhdo

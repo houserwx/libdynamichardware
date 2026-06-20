@@ -1,8 +1,8 @@
-#include "dynamichardware/pdo/HardwareRegistry.h"
+#include "dynamichardware/dhdo/HardwareRegistry.h"
 #include <cstdio>
 #include <stdexcept>
 
-namespace dynamichardware::pdo {
+namespace dynamichardware::dhdo {
 
 void HardwareRegistry::addBackend(std::unique_ptr<IRTBackend> adapter)
 {
@@ -16,10 +16,10 @@ void HardwareRegistry::buildUuidMap()
 {
     uuidMap_.clear();
     for (const auto& backend : backends_) {
-        for (const auto& pdo : backend->getPDOs()) {
+        for (const auto& pdo : backend->getDHDOS()) {
             for (const auto& e : pdo.entries) {
                 if (!e.uuid.empty()) {
-                    uuidMap_.emplace(e.uuid, const_cast<PDOEntry*>(&e));
+                    uuidMap_.emplace(e.uuid, const_cast<DHDOEntry*>(&e));
                 }
             }
         }
@@ -36,7 +36,7 @@ void HardwareRegistry::freezeForRt()
 
     std::size_t totalEntries = 0;
     for (auto& backend : backends_) {
-        for (auto& pdo : backend->pdos_) {
+        for (auto& pdo : backend->dhdos_) {
             // Freeze this PDO: shrink storage and re-base image pointers.
             pdo.freeze();
             totalEntries += pdo.entries.size();
@@ -49,7 +49,7 @@ void HardwareRegistry::freezeForRt()
 }
 
 // ---- RT cycle -------------------------------------------------------
-// Registry is friend of IRTBackend so it can iterate mutable pdos_
+// Registry is friend of IRTBackend so it can iterate mutable dhdos_
 // during freeze and RT sweeps.
 
 void HardwareRegistry::readAll() noexcept
@@ -60,9 +60,9 @@ void HardwareRegistry::readAll() noexcept
         backend->onBeforeReadInputs();
 
         // Phase 2: concrete read sweep — latch value from image into entry cache
-        // No virtual calls — PDOEntry::read() is a concrete struct method.
+        // No virtual calls — DHDOEntry::read() is a concrete struct method.
         // Reads all input entry types: DI, Encoder, AI, IMU, GPS, Magnetometer, Barometer.
-        for (auto& pdo : backend->pdos_) {
+        for (auto& pdo : backend->dhdos_) {
             for (auto& e : pdo.entries) {
                 if (isInputEntryType(e.type)) {
                     e.read();
@@ -76,9 +76,9 @@ void HardwareRegistry::writeAll() noexcept
 {
     for (auto& backend : backends_) {
         // Phase 3: concrete write sweep — flush pulse/desired state into image
-        // No virtual calls — PDOEntry::write() is a concrete struct method.
+        // No virtual calls — DHDOEntry::write() is a concrete struct method.
         // Writes all output entry types: DO, AO.
-        for (auto& pdo : backend->pdos_) {
+        for (auto& pdo : backend->dhdos_) {
             for (auto& e : pdo.entries) {
                 if (isOutputEntryType(e.type)) {
                     e.write();
@@ -94,14 +94,14 @@ void HardwareRegistry::writeAll() noexcept
 
 // ---- Init-time UUID lookup ------------------------------------------
 
-PDOEntry* HardwareRegistry::lookupByUuid(std::string_view uuid) noexcept
+DHDOEntry* HardwareRegistry::lookupByUuid(std::string_view uuid) noexcept
 {
     if (uuid.empty()) return nullptr;
     auto it = uuidMap_.find(std::string{uuid});
     return (it != uuidMap_.end()) ? it->second : nullptr;
 }
 
-const PDOEntry* HardwareRegistry::lookupByUuid(std::string_view uuid) const noexcept
+const DHDOEntry* HardwareRegistry::lookupByUuid(std::string_view uuid) const noexcept
 {
     if (uuid.empty()) return nullptr;
     auto it = uuidMap_.find(std::string{uuid});
@@ -124,7 +124,7 @@ std::size_t HardwareRegistry::entryCount() const noexcept
 {
     std::size_t n = 0;
     for (const auto& backend : backends_) {
-        for (const auto& pdo : backend->getPDOs()) {
+        for (const auto& pdo : backend->getDHDOS()) {
             n += pdo.entries.size();
         }
     }
@@ -134,7 +134,7 @@ std::size_t HardwareRegistry::entryCount() const noexcept
 void HardwareRegistry::printState() const
 {
     for (const auto& backend : backends_) {
-        for (const auto& pdo : backend->getPDOs()) {
+        for (const auto& pdo : backend->getDHDOS()) {
             for (const auto& e : pdo.entries) {
                 switch (e.type) {
                 case EntryType::BoolInput:
@@ -165,4 +165,4 @@ void HardwareRegistry::printState() const
     }
 }
 
-} // namespace dynamichardware::pdo
+} // namespace dynamichardware::dhdo

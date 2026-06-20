@@ -4,6 +4,7 @@
 #include <nlohmann/json.hpp>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 // ============================================================================
@@ -33,10 +34,10 @@
 //   4. catalog.save(path)                   — immediately after discover()
 //   5. adapter.buildRT()                    — construct PDOs and activate backend
 //   6. registry.addBackend(adapter)         — transfer ownership to registry
-//   7. registry.buildUuidMap()              — builds string→PDOEntry* map
+//   7. registry.buildUuidMap()              — builds string→DHDOEntry* map
 // ==============================================================================
 
-namespace dynamichardware::pdo {
+namespace dynamichardware::dhdo {
 
 // ---------------------------------------------------------------------------
 // CatalogEntry — one PDO channel identified solely by its stable UUID.
@@ -104,7 +105,7 @@ struct CatalogEntry {
 //   4. catalog.save(path)                   — immediately after discover()
 //   5. adapter.buildRT()                    — construct PDOs and activate backend
 //   6. registry.addBackend(adapter)         — transfer ownership to registry
-//   7. registry.buildUuidMap()              — builds string→PDOEntry* map
+//   7. registry.buildUuidMap()              — builds string→DHDOEntry* map
 //
 // On subsequent starts the same keys re-map to the same UUIDs.
 // ---------------------------------------------------------------------------
@@ -112,6 +113,18 @@ class HardwareCatalog {
 public:
     bool load(const std::string& path);
     bool save(const std::string& path) const;
+
+    // ---- Discovery lifecycle ----
+    // Call beginDiscovery() before running any adapters, then purgeStaleEntries()
+    // after all adapters complete.  Entries added via addEntry/registerEcChannel
+    // are auto-marked as "alive" so they survive; anything not re-seen gets removed.
+
+    /// Begin a fresh discovery cycle — marks current catalog as potentially stale.
+    void beginDiscovery();
+
+    /// End discovery — remove entries that were NOT registered during this cycle.
+    /// Returns the number of purged entries.
+    size_t purgeStaleEntries();
 
     // ---- Registration (called during EtherCAT / I2C / SPI discovery) ----
 
@@ -131,6 +144,7 @@ public:
     );
 
     /// Register a new channel entry (generic backend). Generates UUID if key is new.
+    /// If in discovery mode, auto-marks this key as "alive" so it survives purge.
     void addEntry(CatalogEntry entry);
 
     // ---- Accessors --------------------------------------------------------
@@ -155,8 +169,14 @@ private:
     std::unordered_map<std::string, size_t> keyIndex_;   ///< key  → index
     std::unordered_map<std::string, size_t> uuidIndex_;  ///< uuid → index
 
-    void rebuildIndices();
+    // Discovery lifecycle: tracks which keys were registered during current cycle.
+    bool                            discoveryMode_{false};
+    std::unordered_set<std::string> aliveKeys_;  ///< Keys marked alive since beginDiscovery()
 
+    void markAlive(const std::string& key);
+    void rebuildIndices();
+    /// FNV-1a 64-bit hash of a catalog key (for pre-hashed O(1) lookups).
+    static uint64_t hashKey(std::string_view key);
     /// Build the canonical key string from slave identity + PDO address.
     static std::string makeKey(uint32_t vendorId, uint32_t productCode,
                                uint32_t revisionNumber, uint16_t slavePos,
@@ -171,4 +191,4 @@ private:
     static std::string generateUuid();
 };
 
-} // namespace dynamichardware::pdo
+} // namespace dynamichardware::dhdo

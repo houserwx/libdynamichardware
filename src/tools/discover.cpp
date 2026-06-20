@@ -8,7 +8,8 @@
 //   dh-discover --gen-simdefs cat.json out.json  # generate sim definitions from catalog
 
 #include "dynamichardware/DynamicHardwareContext.h"
-#include "dynamichardware/pdo/HardwareCatalog.h"
+#include "dynamichardware/DynamicHardwareContextFactory.h"
+#include "dynamichardware/dhdo/HardwareCatalog.h"
 #include "dynamichardware/backends/gpio/BoardVariant.h"
 
 #ifdef ETHERCAT_AVAILABLE
@@ -206,7 +207,7 @@ static BackendInfo detectUART()
 
 // ── Catalog inspection ─────────────────────────────────────
 
-static bool inspectCatalog(const std::vector<dynamichardware::pdo::CatalogEntry>& entries)
+static bool inspectCatalog(const std::vector<dynamichardware::dhdo::CatalogEntry>& entries)
 {
     printHeader("Hardware Catalog");
     std::printf("Entries: %zu\n", entries.size());
@@ -237,7 +238,7 @@ static bool inspectCatalog(const std::vector<dynamichardware::pdo::CatalogEntry>
 
 static bool inspectCatalogFile(const std::string& path)
 {
-    dynamichardware::pdo::HardwareCatalog catalog;
+    dynamichardware::dhdo::HardwareCatalog catalog;
     if (!catalog.load(path)) {
         std::fprintf(stderr, "Failed to load catalog: %s\n", path.c_str());
         return false;
@@ -247,7 +248,7 @@ static bool inspectCatalogFile(const std::string& path)
     return inspectCatalog(catalog.entries());
 }
 
-// ── Discovery via DynamicHardwareContext ───────────────
+// ── Discovery via DynamicHardwareContextFactory ───────────────
 
 static void runSimulatedDiscovery(
         const std::optional<std::string>& catalogPath,
@@ -255,18 +256,18 @@ static void runSimulatedDiscovery(
 {
     printHeader("Simulated Backend Discovery");
 
-    auto builder = dynamichardware::DynamicHardwareContext::builder()
-        .withSimulation(defsPath)
-        .catalogPath(catalogPath.value_or("hardware.json"));
+    dynamichardware::DynamicHardwareContextFactory factory;
+    factory.catalogPath(catalogPath.value_or("hardware.json"))
+           .withSimulation(defsPath);
 
-    auto ctx = builder.build();
-    if (!ctx) {
-        std::fprintf(stderr, "[discover] Failed to create context\n");
+    if (!factory.discover()) {
+        std::fprintf(stderr, "[discover] Discovery failed\n");
         return;
     }
 
-    if (!ctx->build()) {
-        std::fprintf(stderr, "[discover] Context build failed\n");
+    auto ctx = factory.buildRT();
+    if (!ctx) {
+        std::fprintf(stderr, "[discover] Failed to build RT context\n");
         return;
     }
 
@@ -283,23 +284,23 @@ static void runRealDiscovery(const std::optional<std::string>& catalogPath)
 {
     printHeader("Hardware Discovery");
 
-    auto builder = dynamichardware::DynamicHardwareContext::builder()
-        .catalogPath(catalogPath.value_or("hardware.json"));
+    dynamichardware::DynamicHardwareContextFactory factory;
+    factory.catalogPath(catalogPath.value_or("hardware.json"));
 
     // Enable backends based on detection
-    if (detectEtherCAT().available) builder.withEthercat();
-    if (detectGPIO().available) builder.withGPIO();
-    if (detectI2C().available) builder.withI2C();
-    if (detectSPI().available) builder.withSPI();
+    if (detectEtherCAT().available) factory.withEthercat();
+    if (detectGPIO().available) factory.withGPIO();
+    if (detectI2C().available) factory.withI2C();
+    if (detectSPI().available) factory.withSPI();
 
-    auto ctx = builder.build();
-    if (!ctx) {
-        std::fprintf(stderr, "[discover] Failed to create context\n");
+    if (!factory.discover()) {
+        std::fprintf(stderr, "[discover] Discovery failed\n");
         return;
     }
 
-    if (!ctx->build()) {
-        std::fprintf(stderr, "[discover] Context build failed\n");
+    auto ctx = factory.buildRT();
+    if (!ctx) {
+        std::fprintf(stderr, "[discover] Failed to build RT context\n");
         return;
     }
 
@@ -321,7 +322,7 @@ static void generateSimDefs(const std::string& catalogPath, const std::string& o
 {
     printHeader("Generate Simulated Adapter Definitions");
 
-    dynamichardware::pdo::HardwareCatalog catalog;
+    dynamichardware::dhdo::HardwareCatalog catalog;
     if (!catalog.load(catalogPath)) {
         std::fprintf(stderr, "Failed to load catalog: %s\n", catalogPath.c_str());
         return;

@@ -1,17 +1,17 @@
 #include <catch2/catch_test_macros.hpp>
-#include <dynamichardware/pdo/PDO.h>
+#include <dynamichardware/dhdo/DHDO.h>
 #include <cstring>
 #include <cmath>
 
-using namespace dynamichardware::pdo;
+using namespace dynamichardware::dhdo;
 
 // ============================================================================
-// PDOEntry bool input read/debounce
+// DHDOEntry bool input read/debounce
 // ============================================================================
-TEST_CASE("PDOEntry BoolInput reads raw bit from image", "[pdoentry]")
+TEST_CASE("DHDOEntry BoolInput reads raw bit from image", "[pdoentry]")
 {
     uint8_t image[8] = {0};
-    PDOEntry entry;
+    DHDOEntry entry;
     entry.type       = EntryType::BoolInput;
     entry.image      = image;
     entry.bitOffset  = 0;
@@ -27,10 +27,10 @@ TEST_CASE("PDOEntry BoolInput reads raw bit from image", "[pdoentry]")
     REQUIRE(entry.getBool() == true);
 }
 
-TEST_CASE("PDOEntry BoolInput reads specific bit offset", "[pdoentry]")
+TEST_CASE("DHDOEntry BoolInput reads specific bit offset", "[pdoentry]")
 {
     uint8_t image[8] = {0};
-    PDOEntry entry;
+    DHDOEntry entry;
     entry.type       = EntryType::BoolInput;
     entry.image      = image;
     entry.bitOffset  = 3;
@@ -46,10 +46,10 @@ TEST_CASE("PDOEntry BoolInput reads specific bit offset", "[pdoentry]")
     REQUIRE(entry.getBool() == false);
 }
 
-TEST_CASE("PDOEntry BoolOutput writes bit to image", "[pdoentry]")
+TEST_CASE("DHDOEntry BoolOutput writes bit to image", "[pdoentry]")
 {
     uint8_t image[8] = {0};
-    PDOEntry entry;
+    DHDOEntry entry;
     entry.type       = EntryType::BoolOutput;
     entry.image      = image;
     entry.bitOffset  = 2;
@@ -66,10 +66,10 @@ TEST_CASE("PDOEntry BoolOutput writes bit to image", "[pdoentry]")
     REQUIRE((image[0] & (1 << 2)) == 0);
 }
 
-TEST_CASE("PDOEntry BoolOutput pulse mode", "[pdoentry]")
+TEST_CASE("DHDOEntry BoolOutput pulse mode", "[pdoentry]")
 {
     uint8_t image[8] = {0};
-    PDOEntry entry;
+    DHDOEntry entry;
     entry.type       = EntryType::BoolOutput;
     entry.image      = image;
     entry.bitOffset  = 0;
@@ -99,12 +99,12 @@ TEST_CASE("PDOEntry BoolOutput pulse mode", "[pdoentry]")
 }
 
 // ============================================================================
-// PDOEntry int32 input (encoder)
+// DHDOEntry int32 input (encoder)
 // ============================================================================
-TEST_CASE("PDOEntry Int32Input reads 32-bit LE value", "[pdoentry]")
+TEST_CASE("DHDOEntry Int32Input reads 32-bit LE value", "[pdoentry]")
 {
     uint8_t image[8] = {0};
-    PDOEntry entry;
+    DHDOEntry entry;
     entry.type       = EntryType::Int32Input;
     entry.image      = image;
     entry.byteOffset = 0;
@@ -116,10 +116,10 @@ TEST_CASE("PDOEntry Int32Input reads 32-bit LE value", "[pdoentry]")
     REQUIRE(entry.getInt32() == val);
 }
 
-TEST_CASE("PDOEntry Int16Input reads 16-bit LE value", "[pdoentry]")
+TEST_CASE("DHDOEntry Int16Input reads 16-bit LE value", "[pdoentry]")
 {
     uint8_t image[8] = {0};
-    PDOEntry entry;
+    DHDOEntry entry;
     entry.type       = EntryType::Int16Input;
     entry.image      = image;
     entry.byteOffset = 0;
@@ -131,10 +131,10 @@ TEST_CASE("PDOEntry Int16Input reads 16-bit LE value", "[pdoentry]")
     REQUIRE(entry.getInt16() == val);
 }
 
-TEST_CASE("PDOEntry FloatInput reads 32-bit float", "[pdoentry]")
+TEST_CASE("DHDOEntry FloatInput reads 32-bit float", "[pdoentry]")
 {
     uint8_t image[8] = {0};
-    PDOEntry entry;
+    DHDOEntry entry;
     entry.type       = EntryType::FloatInput;
     entry.image      = image;
     entry.byteOffset = 0;
@@ -147,12 +147,12 @@ TEST_CASE("PDOEntry FloatInput reads 32-bit float", "[pdoentry]")
 }
 
 // ============================================================================
-// PDOEntry write outputs
+// DHDOEntry write outputs
 // ============================================================================
-TEST_CASE("PDOEntry Int16Output writes 16-bit value", "[pdoentry]")
+TEST_CASE("DHDOEntry Int16Output writes 16-bit value", "[pdoentry]")
 {
     uint8_t image[8] = {0};
-    PDOEntry entry;
+    DHDOEntry entry;
     entry.type       = EntryType::Int16Output;
     entry.image      = image;
     entry.byteOffset = 0;
@@ -166,10 +166,10 @@ TEST_CASE("PDOEntry Int16Output writes 16-bit value", "[pdoentry]")
     REQUIRE(val == 32000);
 }
 
-TEST_CASE("PDOEntry FloatOutput writes 32-bit float", "[pdoentry]")
+TEST_CASE("DHDOEntry FloatOutput writes 32-bit float", "[pdoentry]")
 {
     uint8_t image[8] = {0};
-    PDOEntry entry;
+    DHDOEntry entry;
     entry.type       = EntryType::FloatOutput;
     entry.image      = image;
     entry.byteOffset = 0;
@@ -184,11 +184,11 @@ TEST_CASE("PDOEntry FloatOutput writes 32-bit float", "[pdoentry]")
 }
 
 // ============================================================================
-// PDOEntry read() with no image — no crash
+// DHDOEntry read() with no image — no crash
 // ============================================================================
-TEST_CASE("PDOEntry read/write with null image does nothing", "[pdoentry]")
+TEST_CASE("DHDOEntry read/write with null image does nothing", "[pdoentry]")
 {
-    PDOEntry entry;
+    DHDOEntry entry;
     entry.type  = EntryType::BoolInput;
     entry.image = nullptr;
 
@@ -200,11 +200,11 @@ TEST_CASE("PDOEntry read/write with null image does nothing", "[pdoentry]")
 }
 
 // ============================================================================
-// PDOEntry message slot operations
+// DHDOEntry message slot operations
 // ============================================================================
-TEST_CASE("PDOEntry message arm/consume works", "[pdoentry]")
+TEST_CASE("DHDOEntry message arm/consume works", "[pdoentry]")
 {
-    PDOEntry entry;
+    DHDOEntry entry;
     entry.type = EntryType::MessageOut;
 
     struct TestMsg { int x; float y; };
@@ -221,9 +221,9 @@ TEST_CASE("PDOEntry message arm/consume works", "[pdoentry]")
     REQUIRE(entry.msgSlot_.pending == false);
 }
 
-TEST_CASE("PDOEntry in-message set/consume works", "[pdoentry]")
+TEST_CASE("DHDOEntry in-message set/consume works", "[pdoentry]")
 {
-    PDOEntry entry;
+    DHDOEntry entry;
     entry.type = EntryType::MessageIn;
 
     struct TestMsg { double value; };

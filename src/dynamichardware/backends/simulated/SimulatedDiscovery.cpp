@@ -1,27 +1,38 @@
 #include "dynamichardware/backends/simulated/SimulatedDiscovery.h"
 
+#include "dynamichardware/dhdo/HardwareCatalog.h"
+#include "dynamichardware/dhdo/DHDO.h"
+
 #include <cmath>
+#include <climits>
 #include <cstdio>
 #include <fstream>
+#include <string>
 #include <nlohmann/json.hpp>
 
 namespace dynamichardware::simulated {
 
 // ---------------------------------------------------------------------------
+// Constructor — store path to JSON definitions file.
+// ---------------------------------------------------------------------------
+SimulatedDiscovery::SimulatedDiscovery(std::string definitionsPath)
+    : definitionsPath_(std::move(definitionsPath)) {}
+
+// ---------------------------------------------------------------------------
 // Helper: map channelType string → EntryType enum + isOutput flag
 // ---------------------------------------------------------------------------
-static void resolveChannelType(const std::string& type, pdo::EntryType& outType, bool& outIsOutput) noexcept
+static void resolveChannelType(const std::string& type, dhdo::EntryType& outType, bool& outIsOutput) noexcept
 {
     outIsOutput = false;
 
-    if (type == "BoolInput")   outType = pdo::EntryType::BoolInput;
-    else if (type == "BoolOutput") { outType = pdo::EntryType::BoolOutput; outIsOutput = true; }
-    else if (type == "Int8Input")  outType = pdo::EntryType::Int8Input;
-    else if (type == "Int16Input") outType = pdo::EntryType::Int16Input;
-    else if (type == "Int32Input") outType = pdo::EntryType::Int32Input;
-    else if (type == "Int16Output") { outType = pdo::EntryType::Int16Output; outIsOutput = true; }
-    else if (type == "FloatInput")  outType = pdo::EntryType::FloatInput;
-    else if (type == "FloatOutput") { outType = pdo::EntryType::FloatOutput; outIsOutput = true; }
+    if (type == "BoolInput")   outType = dhdo::EntryType::BoolInput;
+    else if (type == "BoolOutput") { outType = dhdo::EntryType::BoolOutput; outIsOutput = true; }
+    else if (type == "Int8Input")  outType = dhdo::EntryType::Int8Input;
+    else if (type == "Int16Input") outType = dhdo::EntryType::Int16Input;
+    else if (type == "Int32Input") outType = dhdo::EntryType::Int32Input;
+    else if (type == "Int16Output") { outType = dhdo::EntryType::Int16Output; outIsOutput = true; }
+    else if (type == "FloatInput")  outType = dhdo::EntryType::FloatInput;
+    else if (type == "FloatOutput") { outType = dhdo::EntryType::FloatOutput; outIsOutput = true; }
 }
 
 // ---------------------------------------------------------------------------
@@ -51,15 +62,17 @@ bool SimulatedDiscovery::discover()
     }
 
     for (const auto& ch : j["channels"]) {
-        dynamichardware::pdo::CatalogEntry entry{};
-        entry.key         = "SIM|" + ch.value("name", "");
-        entry.uuid        = ch.value("uuid", "");
+        std::string chanName = ch.value("name", "");
+        std::string simKey   = ch.value("uuid", "SIM|" + chanName);
+
+        dynamichardware::dhdo::CatalogEntry entry{};
+        entry.key         = simKey;
         entry.channelType = ch.value("channelType", "BoolInput");
-        entry.name        = ch.value("name", "");
+        entry.name        = chanName;
         entry.slaveName   = "Simulated";
         entry.isSimulated = true;
 
-        pdo::EntryType resolvedType{};
+        dhdo::EntryType resolvedType{};
         bool isOutput{false};
         resolveChannelType(entry.channelType, resolvedType, isOutput);
         entry.isOutput = isOutput;

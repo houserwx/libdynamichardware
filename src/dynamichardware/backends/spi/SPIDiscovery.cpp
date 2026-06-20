@@ -1,5 +1,7 @@
 #include "dynamichardware/backends/spi/SPIDiscovery.h"
 
+#include "dynamichardware/dhdo/HardwareCatalog.h"
+
 #include <cstdio>
 #include <fstream>
 

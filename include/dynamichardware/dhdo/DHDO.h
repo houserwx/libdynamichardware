@@ -3,7 +3,16 @@
 // ============================================================================
 // PDO.h — core process-image types (no vtable).
 //
-// PDOEntry  — one I/O channel.  Maps a bit/byte offset in a process
+// TERMINOLOGY NOTE:
+//   The word "PDO" is borrowed from EtherCAT (Process Data Object), where it
+//   refers to hardware-mapped contiguous DMA buffers on the bus.
+//   In this library, `PDO` is a transport-agnostic abstraction layer:
+//     - EtherCAT backend: maps directly onto real EtherCAT PDO geometry.
+//     - GPIO/I2C/SPI backends: independent channels with NO hardware-level
+//       PDO concept — each channel is its own syscall or register access.
+//     - Simulated backend: synthetic data generators with zero hardware mapping.
+//
+// DHDOEntry  — one I/O channel.  Maps a bit/byte offset in a process
 //             image buffer to a typed value.  All accessor and
 //             read/write methods are concrete — no virtual dispatch.
 //
@@ -11,11 +20,11 @@
 //             that live inside it.
 //
 // Lifecycle:
-//   Init:    adapter constructs PDOEntry values and pushes them into
+//   Init:    adapter constructs DHDOEntry values and pushes them into
 //            PDO::entries; adapter sets PDO::image.
 //   Freeze:  PDO::freeze() shrinks storage and re-bases entry image
 //            pointers.  After freeze nothing may be added or resized.
-//   RT:      PDOEntry::read() / write() are the only methods called
+//   RT:      DHDOEntry::read() / write() are the only methods called
 //            in the hot path — inlineable, branch-predictable.
 // ============================================================================
 
@@ -26,7 +35,7 @@
 #include <string>
 #include <vector>
 
-namespace dynamichardware::pdo {
+namespace dynamichardware::dhdo {
 
 // ------------------------------------------------------------
 // EntryFlag — bitmask fields for composing EntryType.
@@ -93,9 +102,9 @@ constexpr uint8_t entryBitSize(uint8_t t)     noexcept { return t & 0x60; }
 constexpr bool    entryIsSigned(uint8_t t)    noexcept { return t & SIGNED; }
 
 // ------------------------------------------------------------
-// PDOEntry — concrete, no vtable, value-type (moveable).
+// DHDOEntry — concrete, no vtable, value-type (moveable).
 // ------------------------------------------------------------
-struct PDOEntry {
+struct DHDOEntry {
     uint8_t* image{nullptr};
     uint32_t byteOffset{0};
     uint8_t  bitOffset{0};
@@ -180,20 +189,20 @@ private:
 // PDO — owns an image buffer and the entries that live in it.
 //
 // Lifecycle:
-//   Init:    adapter constructs PDOEntry values and pushes them into
+//   Init:    adapter constructs DHDOEntry values and pushes them into
 //            PDO::entries; adapter sets PDO::image (or leaves it empty
 //            if image is owned by the backend, e.g. EtherCAT domainData).
 //   Freeze:  PDO::freeze() shrinks storage and re-bases entry image
 //            pointers.  If image.empty(), entry image pointers are left
 //            untouched (they already point into backend-owned memory).
-//   RT:      PDOEntry::read() / write() are the only methods called
+//   RT:      DHDOEntry::read() / write() are the only methods called
 //            in the hot path — inlineable, branch-predictable.
 // ------------------------------------------------------------
-struct PDO {
+struct DHDO {
     std::vector<uint8_t>  image;
-    std::vector<PDOEntry> entries;
+    std::vector<DHDOEntry> entries;
 
     void freeze();
 };
 
-} // namespace dynamichardware::pdo
+} // namespace dynamichardware::dhdo

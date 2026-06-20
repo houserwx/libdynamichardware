@@ -1,5 +1,5 @@
 #pragma once
-#include "dynamichardware/pdo/IRTBackend.h"
+#include "dynamichardware/dhdo/IRTBackend.h"
 #include "dynamichardware/backends/gpio/BoardVariant.h"
 
 #include <string>
@@ -39,7 +39,7 @@ struct GPIOLine {
     float             pwmDutyCycle{0.0f};
 
     /// PDO entry pointer (owned by this adapter during RT lifecycle).
-    dynamichardware::pdo::PDOEntry* entry{nullptr};
+    dynamichardware::dhdo::DHDOEntry* entry{nullptr};
 };
 
 /// ---- GPIORTBackend -------------------------------------------------------
@@ -47,7 +47,7 @@ struct GPIOLine {
 ///
 /// Fully independent of discovery: opens its own chip handle in buildRT(),
 /// reads catalog entries discovered by GPIODiscovery, builds PDOs from scratch.
-class GPIORTBackend final : public dynamichardware::pdo::IRTBackend {
+class GPIORTBackend final : public dynamichardware::dhdo::IRTBackend {
 public:
     GPIORTBackend();
     GPIORTBackend(BoardVariant variant, std::string chipPath);
@@ -66,7 +66,7 @@ public:
     /// Register a GPIO line for use in the process image. Must be called before buildRT().
     /// Called by DynamicHardwareContext during consumer configuration phase.
     int registerLine(uint32_t gpio_offset, LineDirection direction, std::string name,
-                     dynamichardware::pdo::EntryType entryType);
+                     dynamichardware::dhdo::EntryType entryType);
 
     [[nodiscard]] BoardVariant boardVariant() const noexcept { return variant_; }
     [[nodiscard]] std::size_t  lineCount()     const noexcept { return lines_.size(); }

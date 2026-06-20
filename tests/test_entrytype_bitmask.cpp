@@ -1,9 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers.hpp>
-#include <dynamichardware/pdo/PDO.h>
+#include <dynamichardware/dhdo/DHDO.h>
 #include <set>
 
-using namespace dynamichardware::pdo;
+using namespace dynamichardware::dhdo;
 
 // ============================================================================
 // EntryType bitmask field isolation — verify bit fields don't overlap

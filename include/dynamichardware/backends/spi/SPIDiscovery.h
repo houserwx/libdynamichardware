@@ -1,5 +1,5 @@
 #pragma once
-#include "dynamichardware/pdo/IDiscoveryBackend.h"
+#include "dynamichardware/dhdo/IDiscoveryBackend.h"
 
 #include <string>
 
@@ -22,7 +22,7 @@
 
 namespace dynamichardware::spi {
 
-class SPIDiscovery final : public dynamichardware::pdo::IDiscoveryBackend {
+class SPIDiscovery final : public dynamichardware::dhdo::IDiscoveryBackend {
 public:
     explicit SPIDiscovery(std::string busPath);
     ~SPIDiscovery() override = default;

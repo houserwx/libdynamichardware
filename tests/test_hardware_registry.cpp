@@ -1,13 +1,13 @@
 #include <catch2/catch_test_macros.hpp>
-#include <dynamichardware/pdo/HardwareRegistry.h>
-#include <dynamichardware/pdo/HardwareCatalog.h>
-#include <dynamichardware/pdo/PDOFactory.h>
-#include <dynamichardware/pdo/IDiscoveryBackend.h>
-#include <dynamichardware/pdo/IRTBackend.h>
+#include <dynamichardware/dhdo/HardwareRegistry.h>
+#include <dynamichardware/dhdo/HardwareCatalog.h>
+#include <dynamichardware/dhdo/DHDOFactory.h>
+#include <dynamichardware/dhdo/IDiscoveryBackend.h>
+#include <dynamichardware/dhdo/IRTBackend.h>
 #include <cstring>
 #include <memory>
 
-using namespace dynamichardware::pdo;
+using namespace dynamichardware::dhdo;
 
 // ============================================================================
 // Test adapter — minimal dual-interface implementation for testing.
@@ -16,7 +16,7 @@ using namespace dynamichardware::pdo;
 class TestAdapter : public IDiscoveryBackend, public IRTBackend {
 public:
     void addEntry(const std::string& uuid, EntryType type, uint32_t offset, uint8_t bitLength) {
-        PDOEntry e;
+        DHDOEntry e;
         e.uuid       = uuid;
         e.type       = type;
         e.byteOffset = offset;
@@ -27,17 +27,18 @@ public:
     // IDiscoveryBackend — trivial no-op discovery for tests
     bool discover() override { return true; }
 
-    // IRTBackend — builds PDO structure from pre-added entries
+    // IRTBackend — builds PDO structure from pre-added entries.
+    // Sets base pointer before freeze(); freeze() handles byteOffset rebasing.
     bool buildRT() override {
-        // Build PDO from entries
-        pdos_.resize(1);
-        pdos_[0].image.resize(64);
+        dhdos_.resize(1);
+        dhdos_[0].image.resize(64);
 
+        uint8_t* base = dhdos_[0].image.data();
         for (auto& e : entries_) {
-            e.image = pdos_[0].image.data() + e.byteOffset;
-            pdos_[0].entries.push_back(std::move(e));
+            e.image = base;  // base only; freeze() adds byteOffset
+            dhdos_[0].entries.push_back(std::move(e));
         }
-        pdos_[0].freeze();
+        dhdos_[0].freeze();
         initialized_ = true;
         return true;
     }
@@ -60,7 +61,7 @@ public:
     [[nodiscard]] int  writeOutputsCalled() const { return writeOutputsCalled_; }
 
 private:
-    std::vector<PDOEntry> entries_;
+    std::vector<DHDOEntry> entries_;
     bool initialized_{false};
     int readInputsCalled_{0};
     int writeOutputsCalled_{0};
@@ -121,17 +122,15 @@ TEST_CASE("HardwareRegistry readAll calls adapter hooks and reads entries", "[re
     registry.buildUuidMap();
     registry.freezeForRt();
 
-    // Set up values in the image
+    // Set up values in the image — after freeze(), image points directly at target byte.
     auto* entry = registry.lookupByUuid("rt-test-bool");
     REQUIRE(entry != nullptr);
-    entry->image[0] = 1;  // Set bool to true
+    *entry->image = (1u << entry->bitOffset);  // set the bit at bitOffset high
 
     entry = registry.lookupByUuid("rt-test-float");
     REQUIRE(entry != nullptr);
     float val = 3.14f;
-    // After freeze, entry.image = pdo.image.data() + byteOffset.
-    // read() adds byteOffset again, so write at entry->image + byteOffset.
-    std::memcpy(entry->image + entry->byteOffset, &val, sizeof(val));
+    std::memcpy(entry->image, &val, sizeof(val));
 
     // Run readAll
     dynamichardware::rt::signalProcessTickNow();
@@ -163,8 +162,8 @@ TEST_CASE("HardwareRegistry writeAll calls adapter hooks and writes entries", "[
     dynamichardware::rt::signalProcessTickNow();
     registry.writeAll();
 
-    // BoolOutput in latched mode should write the bit
-    CHECK((entry->image[0] & 1) != 0);
+    // BoolOutput in latched mode should write the bit — *image is already positioned at target byte after freeze().
+    CHECK((*entry->image & (1u << entry->bitOffset)) != 0);
 }
 
 // ============================================================================
@@ -252,10 +251,10 @@ TEST_CASE("HardwareRegistry RT cycle skips message entries", "[registry]")
     registry.buildUuidMap();
     registry.freezeForRt();
 
-    // Set up the bool entry
+    // Set up the bool entry — after freeze(), image points directly at target byte.
     auto* boolEntry = registry.lookupByUuid("normal-in");
     REQUIRE(boolEntry != nullptr);
-    boolEntry->image[16] = 1;
+    *boolEntry->image = 1;
 
     dynamichardware::rt::signalProcessTickNow();
     registry.readAll();

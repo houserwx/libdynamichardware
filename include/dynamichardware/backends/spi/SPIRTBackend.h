@@ -1,5 +1,5 @@
 #pragma once
-#include "dynamichardware/pdo/IRTBackend.h"
+#include "dynamichardware/dhdo/IRTBackend.h"
 
 #include <string>
 #include <vector>
@@ -10,7 +10,7 @@ namespace dynamichardware::spi {
 /// ---- SPIRTBackend --------------------------------------------------------
 /// Real-time SPI process-data backend. Implements IRTBackend.
 /// Fully independent of discovery — acquires own resources in buildRT().
-class SPIRTBackend final : public dynamichardware::pdo::IRTBackend {
+class SPIRTBackend final : public dynamichardware::dhdo::IRTBackend {
 public:
     explicit SPIRTBackend(std::string busPath);
     ~SPIRTBackend() override = default;
@@ -22,7 +22,7 @@ public:
     /// Register an SPI device before calling buildRT(). Returns device index.
     /// Called by DynamicHardwareContext during consumer configuration phase — NOT by external consumers directly.
     int registerDevice(uint8_t chipSelect, std::string name,
-                       std::vector<dynamichardware::pdo::EntryType> entryTypes);
+                       std::vector<dynamichardware::dhdo::EntryType> entryTypes);
 
 private:
     struct Device {
@@ -31,7 +31,7 @@ private:
         uint32_t  maxSpeedHz{1'000'000};
         uint8_t   mode{0};
         std::string name;
-        std::vector<dynamichardware::pdo::PDOEntry*> entries;
+        std::vector<dynamichardware::dhdo::DHDOEntry*> entries;
     };
 
     std::string       busPath_;

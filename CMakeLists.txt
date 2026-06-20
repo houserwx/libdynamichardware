@@ -14,26 +14,32 @@ include(CMakePackageConfigHelpers)
 # ── Sources ──────────────────────────────────────────────────────────────────
 
 set(LD_SOURCES
-    # Context — single library entry point
-    src/DynamicHardwareContext.cpp
-    # PDO core (transport layer — not a backend)
-    src/dynamichardware/pdo/PDO.cpp
-    src/dynamichardware/pdo/HardwareRegistry.cpp
-    src/dynamichardware/pdo/PDOFactory.cpp
-    src/dynamichardware/pdo/HardwareCatalog.cpp
+    # Context — split into separate classes (1 class per file)
+    src/SimulatedDefinitionBuilder.cpp
+    src/DynamicHardwareContextFactory.cpp
+    src/DynamicHardwareContextObject.cpp
+    # DHDO core (transport-agnostic process image abstraction)
+    src/dynamichardware/dhdo/DHDO.cpp
+    src/dynamichardware/dhdo/HardwareRegistry.cpp
+    src/dynamichardware/dhdo/DHDOFactory.cpp
+    src/dynamichardware/dhdo/HardwareCatalog.cpp
     # EtherCAT backend (split discovery + RT)
     src/dynamichardware/backends/ethercat/EthercatDiscovery.cpp
     src/dynamichardware/backends/ethercat/EthercatRTBackend.cpp
     src/dynamichardware/backends/ethercat/kSlaveTypes.cpp
-    # GPIO adapter
+    # GPIO backend (split discovery + RT)
     src/dynamichardware/backends/gpio/BoardVariant.cpp
-    src/dynamichardware/backends/gpio/GPIOAdapter.cpp
-    # I2C adapter
-    src/dynamichardware/backends/i2c/I2CAdapter.cpp
-    # SPI adapter
-    src/dynamichardware/backends/spi/SPIAdapter.cpp
-    # Simulated adapter
-    src/dynamichardware/backends/simulated/SimulatedAdapter.cpp
+    src/dynamichardware/backends/gpio/GPIODiscovery.cpp
+    src/dynamichardware/backends/gpio/GPIORTBackend.cpp
+    # I2C backend (split discovery + RT)
+    src/dynamichardware/backends/i2c/I2CDiscovery.cpp
+    src/dynamichardware/backends/i2c/I2CRTBackend.cpp
+    # SPI backend (split discovery + RT)
+    src/dynamichardware/backends/spi/SPIDiscovery.cpp
+    src/dynamichardware/backends/spi/SPIRTBackend.cpp
+    # Simulated backend (split discovery + RT)
+    src/dynamichardware/backends/simulated/SimulatedDiscovery.cpp
+    src/dynamichardware/backends/simulated/SimulatedRTBackend.cpp
 )
 
 add_library(dynamichardware STATIC ${LD_SOURCES})
@@ -165,7 +171,15 @@ if(LIBGPIOD_FOUND)
     endif()
 endif()
 
-install(TARGETS dh-discover
+add_executable(ethercat_demo examples/ethercat_demo.cpp)
+target_link_libraries(ethercat_demo PRIVATE dynamichardware)
+target_include_directories(ethercat_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+if(ETHERCAT_AVAILABLE)
+    target_compile_definitions(ethercat_demo PRIVATE ETHERCAT_AVAILABLE)
+    target_include_directories(ethercat_demo PRIVATE ${ETHERCAT_INCLUDE_DIR})
+endif()
+
+install(TARGETS dh-discover ethercat_demo simulated_io_demo
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
@@ -230,11 +244,11 @@ if(BUILD_TESTS)
 
     set(TEST_SOURCES
         tests/test_entrytype_bitmask.cpp
-        tests/test_pdo_entry.cpp
+        tests/test_dhdo_entry.cpp
         tests/test_signal_process.cpp
         tests/test_vector_buffer.cpp
-        tests/test_pdo_freeze.cpp
-        tests/test_pdo_factory.cpp
+        tests/test_dhdo_freeze.cpp
+        tests/test_dhdo_factory.cpp
         tests/test_hardware_registry.cpp
         tests/test_hardware_catalog.cpp
     )

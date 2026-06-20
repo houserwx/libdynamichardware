@@ -22,7 +22,7 @@ bool I2CRTBackend::buildRT()
     i2cFd_ = -1;
 
     for (auto& device : devices_) {
-        dynamichardware::pdo::PDO pdo;
+        dynamichardware::dhdo::DHDO pdo;
         pdo.entries.reserve(device.entries.size());
         for (auto* entry : device.entries) {
             pdo.entries.push_back(*entry);
@@ -33,10 +33,10 @@ bool I2CRTBackend::buildRT()
             pdo.entries[i].image = pdo.image.data() + (i * sizeof(float));
         }
 
-        pdos_.push_back(std::move(pdo));
+        dhdos_.push_back(std::move(pdo));
     }
 
-    std::printf("[I2C] Built RT: %zu PDOs\n", pdos_.size());
+    std::printf("[I2C] Built RT: %zu PDOs\n", dhdos_.size());
     return true;
 }
 
@@ -44,14 +44,14 @@ void I2CRTBackend::onBeforeReadInputs() noexcept {}
 void I2CRTBackend::onAfterWriteOutputs() noexcept {}
 
 int I2CRTBackend::registerDevice(uint8_t deviceAddr, std::string name,
-                                  std::vector<dynamichardware::pdo::EntryType> entryTypes)
+                                  std::vector<dynamichardware::dhdo::EntryType> entryTypes)
 {
     Device device{};
     device.address = deviceAddr;
     device.name    = std::move(name);
 
     for (const auto& type : entryTypes) {
-        dynamichardware::pdo::PDOEntry entry{};
+        dynamichardware::dhdo::DHDOEntry entry{};
         entry.type = type;
         entry.uuid = "i2c:" + std::to_string(deviceAddr) + ":" + std::to_string(device.entries.size());
         device.entries.push_back(&entry);

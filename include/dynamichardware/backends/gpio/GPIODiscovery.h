@@ -1,5 +1,5 @@
 #pragma once
-#include "dynamichardware/pdo/IDiscoveryBackend.h"
+#include "dynamichardware/dhdo/IDiscoveryBackend.h"
 #include "dynamichardware/backends/gpio/BoardVariant.h"
 
 #include <string>
@@ -22,7 +22,7 @@ namespace dynamichardware::gpio {
 /// Opens the gpiochip, scans every line for kernel claims, populates catalog
 /// with available pins, then releases everything on destruction/reset().
 /// No PDO entries or RT state is created.
-class GPIODiscovery final : public dynamichardware::pdo::IDiscoveryBackend {
+class GPIODiscovery final : public dynamichardware::dhdo::IDiscoveryBackend {
 public:
     /// Construct with auto-detected board variant and chip path.
     GPIODiscovery();
@@ -34,7 +34,9 @@ public:
 
     // setCatalog inherited from IDiscoveryBackend.
 
-    /// Open chip, scan lines into catalog (no PDOEntry/handle creation), release chip.
+    [[nodiscard]] BoardVariant boardVariant() const noexcept { return variant_; }
+
+    /// Open chip, scan lines into catalog (no DHDOEntry/handle creation), release chip.
     [[nodiscard]] bool discover() override;
 
     /// Release all resources early if desired (also called by destructor).

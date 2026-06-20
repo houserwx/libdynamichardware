@@ -1,38 +1,32 @@
-#include "dynamichardware/pdo/HardwareCatalog.h"
+#include "dynamichardware/dhdo/HardwareCatalog.h"
 
+#include <array>
+#include <cstddef>
+#include <cstdint>
 #include <fstream>
-#include <random>
-#include <iomanip>
-#include <sstream>
+#include <string_view>
 #include <cstdio>
 
-namespace dynamichardware::pdo {
+namespace dynamichardware::dhdo {
 
 // ---------------------------------------------------------------------------
-// UUID generation (RFC-4122 v4 implementation)
+// Identity: .uuid == .key — the key IS the permanent identifier.
+// No random UUIDs; structured keys are stable, human-readable, and match
+// across discovery → RT backend rebuild (same vendor/product/pos/channel).
 // ---------------------------------------------------------------------------
-std::string HardwareCatalog::generateUuid()
+
+uint64_t HardwareCatalog::hashKey(const std::string_view key)
 {
-    std::random_device rdev;
-    std::mt19937 gen(rdev());
-    std::uniform_int_distribution<uint32_t> dist(0U, 0xFFFFFFFFU);
+    // FNV-1a 64-bit hash — fast, well-distributed, no collisions on our key space.
+    constexpr uint64_t offset_basis = 0xcbf29ce484222325u;
+    constexpr uint64_t prime        = 0x00000100000001B3u;
 
-    const uint32_t part1 = dist(gen);
-    const auto     part2 = static_cast<uint16_t>(dist(gen) & 0xFFFFU);
-    const auto     part3 = static_cast<uint16_t>((dist(gen) & 0x0FFFU) | 0x4000U); // v4
-    const auto     part4 = static_cast<uint16_t>((dist(gen) & 0x3FFFU) | 0x8000U); // variant 1
-    const uint32_t eHi   = dist(gen);
-    const auto     eLo   = static_cast<uint16_t>(dist(gen) & 0xFFFFU);
-
-    std::ostringstream oss;
-    oss << std::hex << std::setfill('0')
-        << std::setw(8) << part1 << '-'
-        << std::setw(4) << part2 << '-'
-        << std::setw(4) << part3 << '-'
-        << std::setw(4) << part4 << '-'
-        << std::setw(8) << eHi
-        << std::setw(4) << eLo;
-    return oss.str();
+    uint64_t h = offset_basis;
+    for (char c : key) {
+        h ^= static_cast<uint64_t>(static_cast<unsigned char>(c));
+        h *= prime;
+    }
+    return h;
 }
 
 // ---------------------------------------------------------------------------
@@ -81,6 +75,55 @@ bool HardwareCatalog::save(const std::string& path) const
 }
 
 // ---------------------------------------------------------------------------
+// Discovery lifecycle
+// ---------------------------------------------------------------------------
+void HardwareCatalog::beginDiscovery()
+{
+    // Snapshot: all currently-loaded keys are potentially stale.
+    // During this cycle, anything registered via addEntry or registerEcChannel
+    // will be marked "alive"; anything not re-seen gets purged by purgeStaleEntries().
+    aliveKeys_.clear();
+    discoveryMode_ = true;
+}
+
+size_t HardwareCatalog::purgeStaleEntries()
+{
+    if (!discoveryMode_) {
+        std::printf("[Catalog] Not in discovery mode — skipping purge\n");
+        return 0;
+    }
+    discoveryMode_ = false;
+
+    size_t purged = 0;
+    auto writeIt = entries_.begin();
+    for (auto readIt = entries_.begin(); readIt != entries_.end(); ++readIt) {
+        if (aliveKeys_.count(readIt->key)) {
+            // This key was re-registered this cycle — keep it.
+            *writeIt++ = *readIt;
+        } else {
+            // Stale entry (device removed, direction changed, etc.) — remove.
+            ++purged;
+        }
+    }
+    entries_.erase(writeIt, entries_.end());
+
+    rebuildIndices();
+    if (purged > 0) {
+        std::printf("[Catalog] Purged %zu stale entries (%zu remaining)\n", purged, entries_.size());
+    } else {
+        std::printf("[Catalog] No stale entries to purge\n");
+    }
+    return purged;
+}
+
+void HardwareCatalog::markAlive(const std::string& key)
+{
+    if (discoveryMode_) {
+        aliveKeys_.insert(key);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
 const CatalogEntry& HardwareCatalog::registerEcChannel(
@@ -98,19 +141,20 @@ const CatalogEntry& HardwareCatalog::registerEcChannel(
     const std::string key = makeKey(vendorId, productCode, revisionNumber,
                                     slavePos, pdoIndex, pdoSubindex);
 
+    markAlive(key);
     auto it = keyIndex_.find(key);
     if (it != keyIndex_.end()) {
-        // Existing entry — return as-is to preserve UUID.
+        // Existing entry — reuse to preserve UUID across restarts.
         auto& e = entries_[it->second];
         std::printf("[Catalog]   reused  uuid=%.8s...  %s\n",
                     e.uuid.c_str(), e.name.c_str());
         return e;
     }
 
-    // New entry — assign fresh UUID.
+    // New entry — uuid is the key itself (stable identity).
     CatalogEntry e;
     e.key            = key;
-    e.uuid           = generateUuid();
+    e.uuid           = key;  // <-- key IS the identifier
     e.channelType    = channelType;
     e.name           = makeName(slaveName, slavePos, channelType, pdoIndex, pdoSubindex);
     e.slaveName      = slaveName;
@@ -128,20 +172,27 @@ const CatalogEntry& HardwareCatalog::registerEcChannel(
     entries_.push_back(e);
     keyIndex_[key]        = idx;
     uuidIndex_[e.uuid]    = idx;
+    markAlive(key);
     return entries_.back();
 }
 
 void HardwareCatalog::addEntry(CatalogEntry entry)
 {
+    markAlive(entry.key);
     auto it = keyIndex_.find(entry.key);
     if (it != keyIndex_.end()) {
         if (entry.uuid.empty()) {
             entry.uuid = entries_[it->second].uuid;
         }
+        // Ensure uuid == key for consistency.
+        entry.uuid = entry.key;
         entries_[it->second] = std::move(entry);
     } else {
+        // Default: uuid is the key itself.
         if (entry.uuid.empty()) {
-            entry.uuid = generateUuid();
+            entry.uuid = entry.key;
+        } else {
+            entry.uuid = entry.key;  // Force uuid == key regardless of what caller passed
         }
         const size_t idx = entries_.size();
         keyIndex_[entry.key]   = idx;
@@ -161,8 +212,8 @@ const CatalogEntry* HardwareCatalog::findByKey(const std::string& key) const noe
 
 const CatalogEntry* HardwareCatalog::findByUuid(const std::string& uuid) const noexcept
 {
-    auto it = uuidIndex_.find(uuid);
-    return (it != uuidIndex_.end()) ? &entries_[it->second] : nullptr;
+    // Since .uuid == .key, this is the same as findByKey.
+    return findByKey(uuid);
 }
 
 const CatalogEntry* HardwareCatalog::find(uint32_t vendorId, uint32_t productCode) const noexcept
@@ -189,9 +240,10 @@ std::string HardwareCatalog::getOrCreateUuid(const std::string& key) noexcept
 {
     auto it = keyIndex_.find(key);
     if (it != keyIndex_.end()) {
-        return entries_[it->second].uuid;
+        return entries_[it->second].key;
     }
-    return generateUuid();
+    // Key not yet registered — return the key itself as the identity.
+    return key;
 }
 
 // ---------------------------------------------------------------------------
@@ -237,4 +289,4 @@ std::string HardwareCatalog::makeName(
     return oss.str();
 }
 
-} // namespace dynamichardware::pdo
+} // namespace dynamichardware::dhdo
