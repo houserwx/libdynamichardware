@@ -179,7 +179,17 @@ if(ETHERCAT_AVAILABLE)
     target_include_directories(ethercat_demo PRIVATE ${ETHERCAT_INCLUDE_DIR})
 endif()
 
-install(TARGETS dh-discover ethercat_demo simulated_io_demo
+add_executable(gpio_demo examples/gpio_demo.cpp)
+target_link_libraries(gpio_demo PRIVATE dynamichardware)
+target_include_directories(gpio_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+if(LIBGPIOD_FOUND)
+    target_compile_definitions(gpio_demo PRIVATE GPIO_LIBGPIOD_AVAILABLE)
+    if(LIBGPIOD_INCLUDE_DIR)
+        target_include_directories(gpio_demo PRIVATE ${LIBGPIOD_INCLUDE_DIR})
+    endif()
+endif()
+
+install(TARGETS dh-discover ethercat_demo simulated_io_demo gpio_demo
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 

@@ -1,0 +1,47 @@
+{
+  "channels": [
+    {
+      "channelType": "BoolInput",
+      "name": "LimitSwitch-A",
+      "sim": {
+        "dutyCyclePercent": 60.0,
+        "togglePeriodMs": 200
+      },
+      "uuid": "sim-limit-a"
+    },
+    {
+      "channelType": "Int32Input",
+      "name": "Encoder-Position",
+      "sim": {
+        "incrementPerCycle": 5
+      },
+      "uuid": "sim-encoder-pos"
+    },
+    {
+      "channelType": "FloatInput",
+      "name": "Temperature-Sensor",
+      "sim": {
+        "amplitude": 3.0,
+        "frequencyHz": 0.25,
+        "offset": 24.5
+      },
+      "uuid": "sim-temp-sensor"
+    },
+    {
+      "channelType": "BoolOutput",
+      "name": "Relay-Pump",
+      "uuid": "sim-relay-pump"
+    },
+    {
+      "channelType": "Int16Output",
+      "name": "DAC-Voltage",
+      "uuid": "sim-dac-voltage"
+    },
+    {
+      "channelType": "FloatOutput",
+      "name": "PID-Speed-Setpoint",
+      "uuid": "sim-speed-sp"
+    }
+  ],
+  "cycleTimeUs": 1000
+}

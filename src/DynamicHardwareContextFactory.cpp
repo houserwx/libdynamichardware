@@ -22,6 +22,7 @@
 #include "dynamichardware/backends/simulated/SimulatedRTBackend.h"
 
 #include <cstdio>
+#include <string>
 
 namespace dynamichardware {
 
@@ -67,6 +68,16 @@ DynamicHardwareContextFactory& DynamicHardwareContextFactory::withSimulation(
 {
     state_.enableSimulation = true;
     state_.simDefinitionsPath = std::move(definitionsPath);
+    return *this;
+}
+
+DynamicHardwareContextFactory& DynamicHardwareContextFactory::defineChannel(
+        const std::string& keyOrUuid, dhdo::EntryType type)
+{
+    ChannelDefinition def{};
+    def.keyOrUuid = keyOrUuid;
+    def.type      = type;
+    channelDefs_.push_back(std::move(def));
     return *this;
 }
 
@@ -198,6 +209,35 @@ std::unique_ptr<DynamicHardwareContextObject> DynamicHardwareContextFactory::bui
         auto rtBackend = std::make_unique<gpio::GPIORTBackend>();
         auto variant = rtBackend->boardVariant();
         if (variant != gpio::BoardVariant::UNKNOWN) {
+            // Feed consumer-defined channels into the GPIO backend.
+            // Parse "GPIO|00|{line_num}" keys to extract line offset and register with correct direction/type.
+            for (const auto& cdef : channelDefs_) {
+                const auto* catEntry = catalog_.findByKey(cdef.keyOrUuid);
+                if (!catEntry) continue;
+
+                // Only accept GPIO entries — other backends handle their own definitions.
+                if (catEntry->key.substr(0, 5) != "GPIO|") continue;
+
+                // Extract line number from key "GPIO|chip|offset"
+                uint32_t gpioOffset = 0;
+                try {
+                    size_t lastSep = catEntry->key.rfind('|');
+                    if (lastSep != std::string::npos && lastSep + 1 < catEntry->key.size()) {
+                        gpioOffset = static_cast<uint32_t>(std::stoul(catEntry->key.substr(lastSep + 1)));
+                    }
+                } catch (...) {
+                    std::fprintf(stderr, "[RtBuild] Bad GPIO key: %s\n", catEntry->key.c_str());
+                    continue;
+                }
+
+                auto dir = dhdo::entryIsInput(cdef.type)
+                             ? gpio::LineDirection::INPUT
+                             : gpio::LineDirection::OUTPUT;
+                rtBackend->registerLine(gpioOffset, dir,
+                    catEntry->name.empty() ? ("GPIO" + std::to_string(gpioOffset)) : catEntry->name,
+                    cdef.type);
+            }
+
             std::printf("[RtBuild] Building GPIO backend (%s)...\n",
                         gpio::boardVariantName(variant).c_str());
             if (rtBackend->buildRT()) {

@@ -17,10 +17,12 @@
 // ============================================================================
 
 #include "dynamichardware/dhdo/HardwareCatalog.h"
+#include "dynamichardware/dhdo/DHDO.h"
 
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace dynamichardware {
 
@@ -60,6 +62,15 @@ public:
     [[nodiscard]] const dhdo::HardwareCatalog& catalog() const noexcept;
     [[nodiscard]]       dhdo::HardwareCatalog& catalog()       noexcept;
 
+    // ---- Channel definitions (consumer explicitly maps channels) ----
+    // EtherCAT autobuilds as an idiosyncrasy of that backend.
+    // For all other backends, the consumer defines which channels to create and with what type.
+
+    /// Define a channel by catalog entry key or UUID, specifying its EntryType.
+    /// Call this between discover() and buildRT().
+    DynamicHardwareContextFactory& defineChannel(const std::string& keyOrUuid,
+                                                  dhdo::EntryType     type);
+
     // ---- Build RT context from discovered data ----
 
     /// Create and return a runtime context object with all RT backends built.
@@ -85,8 +96,14 @@ private:
         std::optional<std::string> simDefinitionsPath;
     };
 
+    struct ChannelDefinition {
+        std::string keyOrUuid;   ///< Catalog entry key or UUID to map
+        dhdo::EntryType type;    ///< Direction + value format for DHDOEntry
+    };
+
     State state_;
     dhdo::HardwareCatalog catalog_;
+    std::vector<ChannelDefinition> channelDefs_;  ///< Consumer-defined channels (non-EtherCAT)
 };
 
 } // namespace dynamichardware
