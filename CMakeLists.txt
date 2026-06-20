@@ -189,6 +189,23 @@ if(LIBGPIOD_FOUND)
     endif()
 endif()
 
+# Bare-metal libgpiod smoke test (no libdynamichardware dependencies)
+if(LIBGPIOD_FOUND)
+    add_executable(gpio_bare_test examples/gpio_bare_test.cpp)
+    target_include_directories(gpio_bare_test PRIVATE ${LIBGPIOD_INCLUDE_DIR})
+    find_package(PkgConfig QUIET)
+    if(PKG_CONFIG_FOUND)
+        pkg_check_modules(LIBGPIOD_PC libgpiod QUIET)
+        if(LIBGPIOD_PC_FOUND)
+            target_link_libraries(gpio_bare_test PRIVATE ${LIBGPIOD_PC_LIBRARIES})
+        else()
+            target_link_libraries(gpio_bare_test PRIVATE gpiod)
+        endif()
+    else()
+        target_link_libraries(gpio_bare_test PRIVATE gpiod)
+    endif()
+endif()
+
 install(TARGETS dh-discover ethercat_demo simulated_io_demo gpio_demo
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )

@@ -38,8 +38,9 @@ struct GPIOLine {
     uint32_t          pwmFrequency{0};
     float             pwmDutyCycle{0.0f};
 
-    /// PDO entry pointer (owned by this adapter during RT lifecycle).
-    dynamichardware::dhdo::DHDOEntry* entry{nullptr};
+    /// DHDOEntry owned BY VALUE — lives as long as the lines_ vector owns this GPIOLine.
+    /// This is safe because value type survives scope exit (unlike stack-local pointers).
+    dynamichardware::dhdo::DHDOEntry entry{};
 };
 
 /// ---- GPIORTBackend -------------------------------------------------------

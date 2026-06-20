@@ -79,15 +79,18 @@ bool GPIORTBackend::buildRT()
     {
         dynamichardware::dhdo::DHDO pdo;
         for (auto& line : lines_) {
-            if (line.entry) {
-                pdo.entries.push_back(*line.entry);
-            }
+            // Copy the value-owned entry into the PDO vector.
+            pdo.entries.emplace_back(line.entry);
         }
 
         if (!pdo.entries.empty()) {
             pdo.image.resize(pdo.entries.size());
             for (size_t i = 0; i < pdo.entries.size(); ++i) {
+                // Wire image pointer on the COPY inside the PDO vector.
                 pdo.entries[i].image = pdo.image.data() + i;
+                // ALSO wire it back to the ORIGINAL in lines_ so RT cycle methods 
+                // can safely access lines_[i].entry.image without null checks.
+                lines_[i].entry.image = pdo.image.data() + i;
             }
             dhdos_.push_back(std::move(pdo));
         }
@@ -120,10 +123,9 @@ int GPIORTBackend::registerLine(uint32_t gpio_offset, LineDirection direction,
     line.direction  = direction;
     line.name       = std::move(name);
 
-    dynamichardware::dhdo::DHDOEntry entry{};
-    entry.type      = entryType;
-    entry.uuid      = "GPIO|00|" + std::to_string(gpio_offset);  // Matches catalog discovery key
-    line.entry      = &entry;
+    // Store DHDOEntry by value — no dangling pointer risk.
+    line.entry.type      = entryType;
+    line.entry.uuid      = "GPIO|00|" + std::to_string(gpio_offset);  // Matches catalog discovery key
 
     const int idx = static_cast<int>(lines_.size());
     lines_.push_back(std::move(line));
@@ -147,8 +149,8 @@ void GPIORTBackend::onBeforeReadInputs() noexcept
             bool val = (cycleCount % 40) < 20;
             stubStates_[i].value = val;
 
-            if (lines_[i].entry && lines_[i].entry->image) {
-                *(uint8_t*)lines_[i].entry->image = val ? 1 : 0;
+            if (lines_[i].entry.image) {
+                *(uint8_t*)lines_[i].entry.image = val ? 1 : 0;
             }
         }
         return;
@@ -161,8 +163,8 @@ void GPIORTBackend::onBeforeReadInputs() noexcept
 
         int val = gpiod_line_get_value(static_cast<struct gpiod_line*>(handles_[i].gpiod_line));
 
-        if (lines_[i].entry && lines_[i].entry->image) {
-            *(uint8_t*)lines_[i].entry->image = static_cast<uint8_t>(val != 0);
+        if (lines_[i].entry.image) {
+            *(uint8_t*)lines_[i].entry.image = static_cast<uint8_t>(val != 0);
         }
     }
 #endif
@@ -177,8 +179,8 @@ void GPIORTBackend::onAfterWriteOutputs() noexcept
         for (size_t i = 0; i < lines_.size(); ++i) {
             if (lines_[i].direction != LineDirection::OUTPUT) continue;
 
-            if (lines_[i].entry && lines_[i].entry->image) {
-                stubStates_[i].value = (*(uint8_t*)lines_[i].entry->image) != 0;
+            if (lines_[i].entry.image) {
+                stubStates_[i].value = (*(uint8_t*)lines_[i].entry.image) != 0;
             }
         }
         return;
@@ -190,8 +192,8 @@ void GPIORTBackend::onAfterWriteOutputs() noexcept
         if (!handles_[i].gpiod_line) continue;
 
         int val = 0;
-        if (lines_[i].entry && lines_[i].entry->image) {
-            val = (*(uint8_t*)lines_[i].entry->image) != 0;
+        if (lines_[i].entry.image) {
+            val = (*(uint8_t*)lines_[i].entry.image) != 0;
         }
 
         gpiod_line_set_value(static_cast<struct gpiod_line*>(handles_[i].gpiod_line), val);
