@@ -120,30 +120,131 @@ void GPIORTBackend::deferredActivate()
 }
 
 // ---------------------------------------------------------------------------
-// registerLine() — THE CONSUMER SHOULD NEVER CALL THIS.  THIS IS SET UP INTERNALLY VIA THE this.Build();  The context should 
-// just do foreach(backend in backends) backend.buildRT(ListOfMapped DHDOEntries for this backend);  Each backend is responsible for knowing its own build needs.  
+// IRuntimeAdapter::setCatalog() — store catalog reference for UUID resolution.
+// Called by orchestrator/factory BEFORE build(channels).
 // ---------------------------------------------------------------------------
-int GPIORTBackend::registerLine(uint32_t gpio_offset, LineDirection direction,
-                                 std::string name, dynamichardware::dhdo::EntryType entryType,
-                                 const std::string& uuid)
+void GPIORTBackend::setCatalog(const dynamichardware::dhdo::HardwareCatalog* catalog) noexcept
 {
-    GPIOLine line{};
-    line.offset     = gpio_offset;
-    line.direction  = direction;
-    line.name       = std::move(name);
+    catalog_ = catalog;
+}
 
-    // Store DHDOEntry by value — no dangling pointer risk.
-    line.entry.type      = entryType;
-    // Use provided catalog UUID if available; fall back to legacy format for compat.
-    line.entry.uuid      = uuid.empty()
-        ? ("GPIO|00|" + std::to_string(gpio_offset))
-        : uuid;
+// ---------------------------------------------------------------------------
+// populateLinesFromChannels() — look up each mapped channel in the catalog,
+// extract GpioBackendData, and construct internal GPIOLine entries.
+// Backend knows its own data format — no backend-specific types leak outward.
+// ---------------------------------------------------------------------------
+void GPIORTBackend::populateLinesFromChannels(
+    const std::vector<dynamichardware::dhdo::MappedChannel>& channels)
+{
+    if (!catalog_) {
+        std::fprintf(stderr, "[GPIO] No catalog set — cannot resolve UUIDs\n");
+        return;
+    }
 
-    const int idx = static_cast<int>(lines_.size());
-    lines_.push_back(std::move(line));
+    lines_.clear();
+    for (const auto& ch : channels) {
+        const auto* catEntry = catalog_->findByUuid(ch.uuid);
+        if (!catEntry) continue;
 
-    handles_.resize(lines_.size());
-    return idx;
+        // Only accept GPIO entries — other backends handle their own definitions.
+        if (catEntry->backend != dhdo::BackendType::GPIO)
+            continue;
+
+        // Read line offset from structured backend data (backend-internal knowledge).
+        auto* gd = std::get_if<dhdo::GpioBackendData>(&catEntry->backendData);
+        if (!gd) continue;
+
+        GPIOLine line{};
+        line.offset     = gd->lineOffset;
+        line.direction  = dhdo::entryIsInput(ch.type)
+                             ? LineDirection::INPUT
+                             : LineDirection::OUTPUT;
+
+        // Use consumer-provided name override if available; otherwise fall back to catalog name.
+        line.name       = ch.name.empty() ? catEntry->name : ch.name;
+
+        // Store DHDOEntry by value — no dangling pointer risk.
+        line.entry.type      = ch.type;
+        line.entry.uuid      = ch.uuid;
+
+        lines_.push_back(std::move(line));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// IDHDOBuilder::build(channels) — populate lines_ from channel list, then build PDOs.
+// All configuration flows through this parameter — no public registerLine() needed.
+// ---------------------------------------------------------------------------
+bool GPIORTBackend::build(const std::vector<dynamichardware::dhdo::MappedChannel>& channels)
+{
+    if (activated_) {
+        std::fprintf(stderr, "[GPIO] Already built — skipping\n");
+        return false;
+    }
+
+    populateLinesFromChannels(channels);
+
+    if (lines_.empty()) {
+        std::printf("[GPIO] No GPIO lines mapped — nothing to build\n");
+        activated_ = true;
+        return true;
+    }
+
+    // Detect board variant if still unknown.
+    if (variant_ == BoardVariant::UNKNOWN) {
+        variant_ = detectBoardVariant();
+        if (variant_ != BoardVariant::UNKNOWN) {
+            chipPath_ = gpioChipPath(variant_);
+        }
+    }
+
+#if HAS_LIBGPIOD
+    if (!openChip()) {
+        std::fprintf(stderr, "[GPIO] Cannot open %s — falling back to stub mode\n",
+                     chipPath_.c_str());
+        stubMode_ = true;
+    }
+#else
+    std::fprintf(stderr, "[GPIO] libgpiod not available — stub mode\n");
+    stubMode_ = true;
+#endif
+
+    // Request hardware handles for each registered line.
+    if (stubMode_) {
+        stubStates_.resize(lines_.size());
+        for (size_t i = 0; i < lines_.size(); ++i) {
+            stubStates_[i].value       = lines_[i].initialVal;
+            stubStates_[i].toggleCycle = 0;
+        }
+    } else {
+        handles_.resize(lines_.size());
+        for (size_t i = 0; i < lines_.size(); ++i) {
+            if (!requestLine(lines_[i], i)) {
+                std::fprintf(stderr, "[GPIO] Cannot request line %u (%s) — will skip\n",
+                             lines_[i].offset, lines_[i].name.c_str());
+            }
+        }
+    }
+
+    // Build PDO from registered lines only.
+    {   dynamichardware::dhdo::DHDO pdo;
+        size_t byteOffset = 0;
+        for (auto& line : lines_) {
+            auto e = line.entry;
+            e.byteOffset = byteOffset++;
+            pdo.entries.push_back(e);
+        }
+
+        if (!pdo.entries.empty()) {
+            pdo.image.resize(byteOffset);
+            dhdos_.push_back(std::move(pdo));
+        }
+    }
+
+    syncImagePointers();
+    activated_ = true;
+    std::printf("[GPIO] Built RT: %zu lines via build(channels)\n", lines_.size());
+    return true;
 }
 
 // ---------------------------------------------------------------------------

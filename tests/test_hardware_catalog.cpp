@@ -205,3 +205,56 @@ TEST_CASE("HardwareCatalog simulated entry round-trip", "[catalog]")
 
     std::filesystem::remove(path);
 }
+
+// ============================================================================
+// HardwareCatalog — write lockdown tests (Phase 2 / Issue B)
+// endDiscovery() locks catalog; isWritable() guards mutation
+// ============================================================================
+
+TEST_CASE("HardwareCatalog is writable by default", "[catalog][lock]") {
+    HardwareCatalog catalog;
+    CHECK(catalog.isWritable() == true);
+}
+
+TEST_CASE("HardwareCatalog endDiscovery locks against writes", "[catalog][lock]") {
+    HardwareCatalog catalog;
+    CHECK(catalog.isWritable() == true);
+    
+    catalog.endDiscovery();
+    CHECK(catalog.isWritable() == false);
+}
+
+TEST_CASE("HardwareCatalog beginDiscovery clears write lock", "[catalog][lock]") {
+    HardwareCatalog catalog;
+    catalog.endDiscovery();
+    CHECK(catalog.isWritable() == false);
+    
+    catalog.beginDiscovery();
+    CHECK(catalog.isWritable() == true);
+}
+
+TEST_CASE("HardwareCatalog addEntry respects write lock", "[catalog][lock]") {
+    HardwareCatalog catalog;
+    
+    // Add entry while writable — should succeed
+    CatalogEntry entry1;
+    entry1.channelType = "BoolInput";
+    entry1.name        = "TestPin1";
+    entry1.backend     = BackendType::GPIO;
+    catalog.addEntry(std::move(entry1));
+    REQUIRE(catalog.entries().size() == 1);
+    
+    // Lock catalog
+    catalog.endDiscovery();
+    CHECK(catalog.isWritable() == false);
+    
+    // Try to add another entry while locked — should be silently rejected
+    CatalogEntry entry2;
+    entry2.channelType = "FloatOutput";
+    entry2.name        = "TestPin2";
+    entry2.backend     = BackendType::GPIO;
+    catalog.addEntry(std::move(entry2));
+    
+    // Entry count unchanged (locked additions are no-ops)
+    CHECK(catalog.entries().size() == 1);
+}

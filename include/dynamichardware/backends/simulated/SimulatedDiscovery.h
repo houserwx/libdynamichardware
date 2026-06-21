@@ -1,5 +1,6 @@
 #pragma once
-#include "dynamichardware/dhdo/IDiscoveryBackend.h"
+#include "dynamichardware/dhdo/IBackendScanner.h"
+#include "dynamichardware/dhdo/HardwareCatalog.h"
 
 #include <string>
 
@@ -24,10 +25,14 @@
 
 namespace dynamichardware::simulated {
 
-class SimulatedDiscovery final : public dynamichardware::dhdo::IDiscoveryBackend {
+class SimulatedDiscovery final
+    : public dynamichardware::dhdo::IBackendScanner {
 public:
     explicit SimulatedDiscovery(std::string definitionsPath);
     ~SimulatedDiscovery() override = default;
+
+    /// Attach target catalog — discover() will register entries here after scan().
+    void setCatalog(dhdo::HardwareCatalog* catalog) noexcept { catalog_ = catalog; }
 
     // Non-copyable, non-movable
     SimulatedDiscovery(const SimulatedDiscovery&)            = delete;
@@ -35,12 +40,15 @@ public:
     SimulatedDiscovery(SimulatedDiscovery&&)                 = delete;
     SimulatedDiscovery& operator=(SimulatedDiscovery&&)      = delete;
 
-    /// Read JSON definitions and populate catalog with simulated channel entries.
-    /// Returns true if at least one simulated entry was loaded (or zero entries gracefully).
-    [[nodiscard]] bool discover() override;
+    /// Pure data scan — parse JSON into HardwareDescriptor vector, no catalog mutation.
+    [[nodiscard]] std::vector<dhdo::HardwareDescriptor> scan() override;
+
+    /// Legacy wrapper — calls scan(), feeds results into catalog_.
+    [[nodiscard]] bool discover();
 
 private:
-    std::string definitionsPath_;
+    std::string            definitionsPath_;
+    dhdo::HardwareCatalog* catalog_{nullptr};
 };
 
 } // namespace dynamichardware::simulated

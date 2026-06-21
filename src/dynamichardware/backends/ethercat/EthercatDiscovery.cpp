@@ -1,27 +1,30 @@
 #include "dynamichardware/backends/ethercat/EthercatDiscovery.h"
 #include "dynamichardware/dhdo/HardwareCatalog.h"
+#include "dynamichardware/dhdo/HardwareDescriptor.h"
 #include "dynamichardware/backends/ethercat/SlaveTypeInfo.h"
 #include "dynamichardware/backends/ethercat/EthercatEntryKey.h"
 
 #include <cstdio>
 #include <thread>
+#include <vector>
 
 namespace dynamichardware::ethercat {
 
 // ---------------------------------------------------------------------------
-// discover() — IDiscoveryBackend implementation
-// Acquires master, creates domain, scans slaves, populates catalog.
-// Releases all resources before returning.
+// IBackenScanner::scan() — pure data scan: acquire master -> walk slaves/PDOs -> return descriptors.
+// Does NOT mutate catalog_. All hardware probing logic lives here.
+// Releases all resources before returning (one-shot probe).
 // ---------------------------------------------------------------------------
-
-bool EthercatDiscovery::discover()
+std::vector<dhdo::HardwareDescriptor> EthercatDiscovery::scan()
 {
+    std::vector<dhdo::HardwareDescriptor> results;
+
 #ifdef ETHERCAT_AVAILABLE
     // 1. Acquire master
     master_ = ecrt_request_master(0);
     if (master_ == nullptr) {
-        std::fprintf(stderr, "[EtherCAT] Cannot acquire master — kernel module loaded?\n");
-        return false;
+        std::fprintf(stderr, "[EtherCAT] Cannot acquire master - kernel module loaded?\n");
+        return results;
     }
 
     // 2. Create process-data domain (needed to resolve PDO geometry / offsets)
@@ -29,54 +32,10 @@ bool EthercatDiscovery::discover()
     if (domain_ == nullptr) {
         std::fprintf(stderr, "[EtherCAT] Failed to create domain\n");
         reset();
-        return false;
+        return results;
     }
 
-    // 3. Discover slaves and register entries in catalog only — no RT setup.
-    bool ok = discoverSlaves();
-
-    if (ok) {
-        std::printf("[EtherCAT] Discovery complete: %d slave(s)\n", nSlaves_);
-    } else {
-        std::fprintf(stderr, "[EtherCAT] Discovery failed\n");
-    }
-
-    // Always release everything — discovery is a one-shot scan.
-    reset();
-    return ok;
-
-#else
-    std::fprintf(stderr, "[EthercatDiscovery] EtherCAT not available — stub mode\n");
-    return false;
-#endif
-}
-
-void EthercatDiscovery::reset() noexcept
-{
-#ifdef ETHERCAT_AVAILABLE
-    if (master_) {
-        ecrt_release_master(master_);
-        master_ = nullptr;
-        domain_ = nullptr;
-    } else {
-        domain_ = nullptr;
-    }
-#endif
-    nSlaves_ = 0;
-}
-
-EthercatDiscovery::~EthercatDiscovery()
-{
-    reset();
-}
-
-// ---------------------------------------------------------------------------
-// discoverSlaves() — walk slaves on bus and populate catalog (no RT state)
-// ---------------------------------------------------------------------------
-
-bool EthercatDiscovery::discoverSlaves()
-{
-#ifdef ETHERCAT_AVAILABLE
+    // 3. Walk slaves on bus and build descriptors from discovered PDO entries.
     ec_master_state_t ms{};
     ecrt_master_state(master_, &ms);
     const int total = static_cast<int>(ms.slaves_responding);
@@ -86,11 +45,10 @@ bool EthercatDiscovery::discoverSlaves()
 
     if (total == 0) {
         std::fprintf(stderr, "[EtherCAT] No slaves responding on bus\n");
-        return false;
+        reset();
+        return results;
     }
 
-    // We need a domain to resolve PDO offsets even in discovery-only mode.
-    // Walk all slaves and register each discovered PDO entry into the catalog.
     for (uint16_t pos = 0; pos < static_cast<uint16_t>(total); ++pos) {
         ec_slave_info_t si{};
         if (ecrt_master_get_slave(master_, pos, &si) != 0) {
@@ -114,7 +72,7 @@ bool EthercatDiscovery::discoverSlaves()
             continue;
         }
 
-        // Walk EEPROM sync managers and discover all PDO entries → register in catalog.
+        // Walk EEPROM sync managers and discover all PDO entries -> build descriptors.
         int entryCountForSlave = 0;
         for (uint8_t smIdx = 0; smIdx < si.sync_count; ++smIdx) {
             ec_sync_info_t smInfo{};
@@ -133,59 +91,106 @@ bool EthercatDiscovery::discoverSlaves()
                         continue;
                     if (entry.index == 0) continue; // padding / gap entry
 
-                    if (catalog_ != nullptr) {
-                        // Single source of truth for key construction — guaranteed to match RT backend.
-                        std::string k = buildEntryKey(
-                            si.vendor_id, si.product_code,
-                            isOutput, entry.bit_length,
-                            pos, entry.index, entry.subindex);
-
-                        // Build human-readable names from slave info or raw EEPROM data
-                        std::string slaveName;
-                        if (sti != nullptr) {
-                            slaveName = sti->type_name;
-                        } else {
-                            slaveName = static_cast<const char*>(si.name);
-                        }
-                        std::string chanName = slaveName + "[pos" + std::to_string(static_cast<int>(pos)) +
-                                               "] ch" + std::to_string(static_cast<int>(entry.subindex));
-
-                       const char* ctype = inferChannelType(entry.bit_length, isOutput);
-                        dynamichardware::dhdo::CatalogEntry catEntry{};
-                        // UUID will be auto-generated from backendData in addEntry().
-                        catEntry.channelType = ctype;
-                        catEntry.name        = chanName;
-                        catEntry.slaveName   = slaveName;
-                        catEntry.isOutput    = isOutput;
-                        catEntry.backend     = dynamichardware::dhdo::BackendType::ETHERCAT;
-                        catEntry.backendData = dynamichardware::dhdo::EthercatBackendData{
-                            si.vendor_id,       /* vendorId */
-                            si.product_code,    /* productCode */
-                            si.revision_number, /* revisionNumber */
-                            pos,                /* slavePos */
-                            entry.index,        /* pdoIndex */
-                            entry.subindex      /* pdoSubindex */
-                        };
-                        catalog_->addEntry(std::move(catEntry));
-                        ++entryCountForSlave;
+                    // Build human-readable names from slave info or raw EEPROM data
+                    std::string slaveName;
+                    if (sti != nullptr) {
+                        slaveName = sti->type_name;
+                    } else {
+                        slaveName = static_cast<const char*>(si.name);
                     }
+                    std::string chanName = slaveName + "[pos" + std::to_string(static_cast<int>(pos)) +
+                                           "] ch" + std::to_string(static_cast<int>(entry.subindex));
+
+                    const char* ctype = inferChannelType(entry.bit_length, isOutput);
+
+                    dhdo::HardwareDescriptor desc{};
+                    desc.channelType = ctype;
+                    desc.name        = chanName;
+                    desc.isOutput    = isOutput;
+                    desc.backend     = dhdo::BackendType::ETHERCAT;
+                    desc.backendData = dhdo::EthercatBackendData{
+                        si.vendor_id,       /* vendorId */
+                        si.product_code,    /* productCode */
+                        si.revision_number, /* revisionNumber */
+                        pos,                /* slavePos */
+                        entry.index,        /* pdoIndex */
+                        entry.subindex      /* pdoSubindex */
+                    };
+
+                    results.push_back(std::move(desc));
+                    ++entryCountForSlave;
                 }
             }
         }
 
         if (entryCountForSlave > 0) {
-            std::printf("[EtherCAT]   → registered %d PDO entries in catalog\n", entryCountForSlave);
+            std::printf("[EtherCAT]   -> found %d PDO entries\n", entryCountForSlave);
         } else {
-            std::printf("[EtherCAT]   → no mappable PDO entries found\n");
+            std::printf("[EtherCAT]   -> no mappable PDO entries found\n");
         }
     }
 
-    return nSlaves_ > 0;
-
 #else
-    (void)0;
-    return false;
+    std::fprintf(stderr, "[EthercatDiscovery] EtherCAT not available - stub mode\n");
 #endif
+
+    // Always release everything — discovery is a one-shot scan.
+    reset();
+    return results;
+}
+
+// ---------------------------------------------------------------------------
+// discover() — thin wrapper: calls scan(), feeds results into catalog_.
+// Acquires master, scans slaves on bus, populates catalog, releases all resources.
+// ---------------------------------------------------------------------------
+bool EthercatDiscovery::discover()
+{
+    auto descriptors = scan();
+
+    if (!catalog_) {
+        std::fprintf(stderr, "[EC-Discovery] No catalog attached\n");
+        return false;
+    }
+
+    for (auto& desc : descriptors) {
+        dhdo::CatalogEntry entry{};
+        entry.channelType = desc.channelType;
+        entry.name        = desc.name;
+        entry.slaveName   = desc.name;  // Will be refined in later phases from backendData
+        entry.isOutput    = desc.isOutput;
+        entry.backend     = desc.backend;
+        entry.backendData = std::move(desc.backendData);
+
+        catalog_->addEntry(std::move(entry));
+    }
+
+    if (!descriptors.empty()) {
+        std::printf("[EtherCAT] Discovery complete: %d slave(s), %zu PDO entries registered\n",
+                    nSlaves_, descriptors.size());
+    } else {
+        std::fprintf(stderr, "[EtherCAT] Discovery found no PDOs\n");
+    }
+
+    return !descriptors.empty();
+}
+
+void EthercatDiscovery::reset() noexcept
+{
+#ifdef ETHERCAT_AVAILABLE
+    if (master_) {
+        ecrt_release_master(master_);
+        master_ = nullptr;
+        domain_ = nullptr;
+    } else {
+        domain_ = nullptr;
+    }
+#endif
+    nSlaves_ = 0;
+}
+
+EthercatDiscovery::~EthercatDiscovery()
+{
+    reset();
 }
 
 } // namespace dynamichardware::ethercat

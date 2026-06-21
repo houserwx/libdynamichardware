@@ -1,5 +1,6 @@
 #pragma once
-#include "dynamichardware/dhdo/IRTBackend.h"
+#include "dynamichardware/dhdo/IRuntimeAdapter.h"
+#include "dynamichardware/dhdo/HardwareCatalog.h"
 #include <vector>
 #include <atomic>
 #include <cstdint>
@@ -80,7 +81,7 @@ struct EcEntryReg {
 };
 
 /// ---- EthercatRTBackend ---------------------------------------------------
-/// Real-time EtherCAT process-data backend for I/O cycles. Implements IRTBackend.
+/// Real-time EtherCAT process-data backend for I/O cycles.
 ///
 /// Fully independent of discovery: acquires its own master/domain in buildRT(),
 /// re-scans the bus, builds PDO structures from scratch (using catalog UUIDs),
@@ -92,7 +93,8 @@ struct EcEntryReg {
 ///   3. onBeforeReadInputs()         — receive + process domain data into buffer
 ///   4. onAfterWriteOutputs()        — queue domain + send frames from buffer
 ///   5. Destructor                   — release master+domain
-class EthercatRTBackend final : public dynamichardware::dhdo::IRTBackend {
+class EthercatRTBackend final
+    : public dynamichardware::dhdo::IRuntimeAdapter {
 public:
     /// @param cycleNs  Cycle period in nanoseconds (must match DC sync configuration).
     explicit EthercatRTBackend(uint32_t cycleNs = 1'000'000u) noexcept
@@ -100,21 +102,25 @@ public:
 
     ~EthercatRTBackend() override;
 
-    // setCatalog inherited protected from IDiscoveryBackend is NOT needed here;
-    // IRTBackend has no catalog_ member. We use catalog indirectly through PDO entries.
-
     /// Optionally attach application Config before calling buildRT().
     void setConfig(const Config* config) noexcept { config_ = config; }
 
-    // --- IRTBackend implementation ------------------------------------------
+    // --- RT lifecycle methods ----------------------------------------------
     /// Acquire master, scan slaves, create domain, activate, build PDOs, wait WC_COMPLETE.
-    [[nodiscard]] bool buildRT() override;
+    [[nodiscard]] bool buildRT();
 
     /// Receive EtherCAT frames and process domain data into the IgH-managed buffer.
     void onBeforeReadInputs()  noexcept override;
 
     /// Sync clocks, queue domain, and send EtherCAT frames from the buffer.
     void onAfterWriteOutputs() noexcept override;
+
+    // --- Builder interface -------------------------------------------------
+    void setCatalog(const dynamichardware::dhdo::HardwareCatalog* catalog) noexcept;
+
+    /// Build RT state: if channels list is empty -> auto-discover all PDOs (legacy behavior).
+    /// If non-empty -> filter to only those UUIDs. Fixes Issue G (LSP consistency).
+    [[nodiscard]] bool build(const std::vector<dynamichardware::dhdo::MappedChannel>& channels) override;
 
     // --- Status accessors ---------------------------------------------------
     [[nodiscard]] bool     isAvailable()          const noexcept { return master_ != nullptr; }
@@ -134,6 +140,8 @@ public:
     }
 
 private:
+    const dynamichardware::dhdo::HardwareCatalog* catalog_{nullptr};
+    std::vector<std::string> channelUuidFilter_; ///< Non-empty = filter to these UUIDs only.
 #ifdef ETHERCAT_AVAILABLE
     ec_master_t*      master_{nullptr};
     ec_domain_t*      domain_{nullptr};

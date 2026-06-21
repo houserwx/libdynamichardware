@@ -3,6 +3,8 @@
 #include <cmath>
 #include <cstdio>
 #include <fstream>
+#include <memory>
+#include <vector>
 #include <nlohmann/json.hpp>
 
 namespace dynamichardware::simulated {
@@ -49,6 +51,58 @@ static std::size_t entryByteSize(dhdo::EntryType t) noexcept
 
 SimulatedRTBackend::SimulatedRTBackend(std::string definitionsPath)
     : definitionsPath_(std::move(definitionsPath)) {}
+
+// ---------------------------------------------------------------------------
+// IRuntimeAdapter::setCatalog()
+// ---------------------------------------------------------------------------
+void SimulatedRTBackend::setCatalog(const dynamichardware::dhdo::HardwareCatalog* catalog) noexcept
+{
+    catalog_ = catalog;
+}
+
+// ---------------------------------------------------------------------------
+// IDHDOBuilder::build(channels) — populate sim states from mapped channels.
+// Receives structured data from orchestrator instead of re-parsing JSON (fixes Issue I).
+// Falls back to loadDefinitions() if channels list is empty (backward compat).
+// ---------------------------------------------------------------------------
+bool SimulatedRTBackend::build(const std::vector<dynamichardware::dhdo::MappedChannel>& channels)
+{
+    // If orchestrator provides mapped channels, use them directly.
+    // Otherwise fall back to legacy self-discovery via buildRT().
+    if (!channels.empty()) {
+        for (const auto& ch : channels) {
+            SimState state{};
+            state.type = ch.type;
+            state.byteOffset = static_cast<uint32_t>(simStates_.size());
+            // Default simulation parameters — can be enhanced with per-channel config later.
+            state.togglePeriodCycles = 10;
+            state.highCycles = 5;
+            state.lowCycles = 5;
+            simStates_.push_back(std::move(state));
+        }
+
+        // Build PDOs from populated sim states.
+        dynamichardware::dhdo::DHDO pdo;
+        size_t byteOffset = 0;
+        for (auto& st : simStates_) {
+            dynamichardware::dhdo::DHDOEntry entry{};
+            entry.type       = st.type;
+            entry.uuid       = "Simulated|" + std::to_string(st.byteOffset);
+            entry.byteOffset = static_cast<uint32_t>(byteOffset++);
+            pdo.entries.push_back(std::move(entry));
+        }
+
+        if (!pdo.entries.empty()) {
+            pdo.image.resize(byteOffset);
+            dhdos_.push_back(std::move(pdo));
+        }
+
+        std::printf("[Simulated] Built RT via build(channels): %zu channels\n", channels.size());
+        return true;
+    }
+
+    return buildRT();  // Legacy path: parse JSON and build RT state.
+}
 
 // ---------------------------------------------------------------------------
 // loadDefinitions() — parse JSON and extract cycle time + channel entries.
@@ -147,7 +201,7 @@ bool SimulatedRTBackend::loadDefinitions(
 }
 
 // ---------------------------------------------------------------------------
-// IRTBackend::buildRT() — build DHDO from JSON simdef entries + alloc buffers.
+// buildRT() — build DHDO from JSON simdef entries + alloc buffers.
 // Fully self-contained: parses definitionsPath_ directly (same source file that
 // SimulatedDiscovery reads for catalog, but we own our own copy here).
 // NOTE: Do NOT call dhdos_[0].freeze() here. Freeze is orchestrated by HardwareRegistry.

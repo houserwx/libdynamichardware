@@ -35,7 +35,7 @@ EthercatRTBackend::~EthercatRTBackend()
 }
 
 // ---------------------------------------------------------------------------
-// buildRT() — IRTBackend implementation
+// buildRT() — RT lifecycle implementation
 /// Fully self-contained: acquires master, scans slaves, creates domain,
 // activates, builds PDO structure, waits for WC_COMPLETE.
 // ---------------------------------------------------------------------------
@@ -398,6 +398,46 @@ void EthercatRTBackend::applyConfig()
             break;
         }
     }
+}
+
+void EthercatRTBackend::setCatalog(const dhdo::HardwareCatalog* catalog) noexcept {
+    catalog_ = catalog;
+}
+
+bool EthercatRTBackend::build(const std::vector<dhdo::MappedChannel>& channels) {
+    // Store UUID filter list if non-empty (for Issue G - LSP consistency)
+    if (!channels.empty()) {
+        channelUuidFilter_.clear();
+        for (const auto& ch : channels) {
+            channelUuidFilter_.push_back(ch.uuid);
+        }
+        std::printf("[EtherCAT] Filtering to %zu specified channels\n", channelUuidFilter_.size());
+    }
+
+    // Call existing buildRT() which handles master init, slave discovery, domain creation, etc.
+    bool ok = buildRT();
+    if (!ok) return false;
+
+    // If we have a UUID filter and entries were built, remove entries not in the filter list.
+    if (!channelUuidFilter_.empty() && !dhdos_[0].entries.empty()) {
+        auto beforeCount = dhdos_[0].entries.size();
+        std::vector<dhdo::DHDOEntry> filtered;
+        for (auto& entry : dhdos_[0].entries) {
+            bool found = false;
+            for (const auto& uuidStr : channelUuidFilter_) {
+                if (entry.uuid == uuidStr) { found = true; break; }
+            }
+            if (found) filtered.push_back(std::move(entry));
+        }
+        auto removedCount = beforeCount - filtered.size();
+        if (removedCount > 0) {
+            std::printf("[EtherCAT] Applied channel filter: kept %zu entries, removed %zu\n",
+                        filtered.size(), removedCount);
+            dhdos_[0].entries = std::move(filtered);
+        }
+    }
+
+    return true;
 }
 
 } // namespace dynamichardware::ethercat

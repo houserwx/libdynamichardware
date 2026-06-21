@@ -2,8 +2,9 @@
 // ethercat_demo.cpp — Example consumer program for libdynamichardware.
 //
 // Demonstrates:
-//   1. Building a DynamicHardwareContext with the EtherCAT backend
-//   2. Discovering and enumerating digital output channels
+//   1. Using DynamicHardwareBuilder with the EtherCAT backend (fixes C/D/E)
+//   2. Discovering and enumerating digital output channels via unified interface 
+//      (no more "autobuild idiosyncrasy" at consumer level — fixes G)
 //   3. Walking through each output (chaser / "running lights" pattern):
 //      turn on one light for 1 second, then move to the next
 // ============================================================================
@@ -14,7 +15,7 @@
 #include <thread>
 #include <vector>
 
-#include "dynamichardware/DynamicHardwareContext.h"
+#include "dynamichardware/DynamicHardwareBuilder.h"
 
 using namespace dynamichardware;
 
@@ -25,21 +26,23 @@ int main()
     std::printf("==========================================================\n\n");
 
     // ------------------------------------------------------------------
-    // Step 1: Discover hardware using the factory API.
+    // Step 1: Discover hardware using the new builder API.
+    //         BackendRegistry iteration replaces hardcoded if-blocks in factory.
     // ------------------------------------------------------------------
-    DynamicHardwareContextFactory factory;
-    factory.catalogPath("hardware.json")
-           .withEthercat(1'000'000u);              // 1 ms cycle time (DC sync)
+    DynamicHardwareBuilder builder;
+    builder.catalogPath("hardware.json")
+           .enableBackend("EtherCAT", {{"cycleNs", "1000000"}});              // 1 ms cycle time (DC sync)
 
-    if (!factory.discover()) {
+    if (!builder.discover()) {
         std::fprintf(stderr, "[Demo] Discovery failed\n");
         return 1;
     }
 
     // ------------------------------------------------------------------
     // Step 2: Build RT context from discovered data.
+    //         Orchestrator passes channels TO backends — no public setup methods (fixes A/F/H).
     // ------------------------------------------------------------------
-    auto ctx = factory.buildRT();
+    auto ctx = builder.buildRT();
     if (!ctx) {
         std::fprintf(stderr, "[Demo] RT context build failed — is an EtherCAT master available?\n");
         return 1;

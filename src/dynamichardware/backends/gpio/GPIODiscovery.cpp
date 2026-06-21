@@ -1,7 +1,9 @@
 #include "dynamichardware/backends/gpio/GPIODiscovery.h"
 #include "dynamichardware/dhdo/HardwareCatalog.h"
+#include "dynamichardware/dhdo/HardwareDescriptor.h"
 
 #include <variant>
+#include <vector>
 
 #include <cstdio>
 #include <fcntl.h>
@@ -36,11 +38,13 @@ void GPIODiscovery::reset() noexcept
 }
 
 // ---------------------------------------------------------------------------
-// discover() — open chip → scan lines → populate catalog → release chip.
-// Pure discovery: no DHDOEntry objects or hardware handles survive this call.
+// IBackenScanner::scan() — pure data scan: open chip -> probe lines -> return descriptors.
+// Does NOT mutate catalog_. All hardware probing logic lives here.
 // ---------------------------------------------------------------------------
-bool GPIODiscovery::discover()
+std::vector<dhdo::HardwareDescriptor> GPIODiscovery::scan()
 {
+    std::vector<dhdo::HardwareDescriptor> results;
+
     // Detect board variant if still unknown.
     if (variant_ == BoardVariant::UNKNOWN) {
         variant_ = detectBoardVariant();
@@ -52,19 +56,19 @@ bool GPIODiscovery::discover()
     if (variant_ == BoardVariant::UNKNOWN) {
         std::fprintf(stderr,
                      "[GPIO] Not a recognized embedded platform — skipping GPIO backend\n");
-        return false;
+        return results;
     }
 
 #if HAS_LIBGPIOD
     auto* chip = gpiod_chip_open(chipPath_.c_str());
     if (!chip) {
         std::fprintf(stderr, "[GPIO] Cannot open %s — skipping\n", chipPath_.c_str());
-        return false;
+        return results;
     }
     chipHandle_ = chip;
 #else
     std::fprintf(stderr, "[GPIO] libgpiod not available — stub mode disabled for discovery\n");
-    return false;
+    return results;
 #endif
 
     uint32_t total_lines = 0;
@@ -73,9 +77,6 @@ bool GPIODiscovery::discover()
 #endif
 
     // Safe pin whitelist: only user-accessible pins on the board header.
-    // Internal/reserved pins (SD card data lanes, PWM alt-funcs, etc.) can crash the
-    // kernel when libgpiod tries to reconfigure pinctrl. Never touch these.
-    // BCM2711 (Pi 4): GPIO 0-27 are generally safe; 28+ are internal/SD-card/etc.
     constexpr uint32_t pi4MaxSafe = 28;
     constexpr uint32_t pi5MaxSafe = 46;
     if (variant_ == BoardVariant::RASPBERRY_PI_4 && total_lines > pi4MaxSafe) {
@@ -86,10 +87,7 @@ bool GPIODiscovery::discover()
 
     std::printf("[GPIO] Scanning %u GPIO lines on %s\n", total_lines, chipPath_.c_str());
 
-    // Known-safe user-accessible pins on BCM2711 header (all others risk pinctrl conflicts):
-    // GPIO 0-5, GPIO 12-13 (SPI CE), GPIO 16-23 (GPIO bank), GPIO 24-25 (SPI data/clock)
-    // Pins to NEVER touch: 6-7 (I2C used by kernel), 8-9 (UART), 10-11 (SPI—pinctrl reserved),
-    //                      26-27 (SD card alt-func on some revisions)
+    // Known-safe user-accessible pins on BCM2711 header.
     static const uint32_t pi4SafePins[] = {
         0, 1, 2, 3, 4, 5,       // General purpose bank
         12, 13,                  // SPI CE lines
@@ -107,7 +105,6 @@ bool GPIODiscovery::discover()
         struct gpiod_line* probe = gpiod_chip_get_line(c, i);
         if (!probe) continue;
 
-        // is_used() catches named consumers and some alternate functions.
         if (gpiod_line_is_used(probe)) {
             const char* consumer = gpiod_line_consumer(probe);
             if (consumer && consumer[0] != '\0') {
@@ -122,7 +119,6 @@ bool GPIODiscovery::discover()
 #endif
 
         // On BCM2711, even "unclaimed" lines might have kernel-assigned alternate functions.
-        // Use explicit whitelist of known-safe user-accessible header pins to avoid crashes.
         if (variant_ == BoardVariant::RASPBERRY_PI_4) {
             bool isSafePin = false;
             for (size_t s = 0; s < pi4SafePinCount; ++s) {
@@ -135,27 +131,21 @@ bool GPIODiscovery::discover()
             }
         }
 
-        // Register in catalog as available bidirectional pin.
-        // Populates structured backendData so consumers use getDetails() instead of
-        // parsing raw key strings.  GpioBackendData.lineOffset holds the GPIO line number.
-        if (catalog_) {
-           dynamichardware::dhdo::CatalogEntry catEntry{};
-            const std::string chipModel = variant_ == BoardVariant::RASPBERRY_PI_5 ? "BCM2712" :
-                                          variant_ == BoardVariant::RASPBERRY_PI_4 ? "BCM2711" : "GPIO";
-            // UUID will be auto-generated from GpioBackendData in addEntry().
-            catEntry.channelType = "DigitalIO";
-            catEntry.slaveName   = chipModel;
-            catEntry.name        = chipModel + " GPIO " + std::to_string(i);
-            catEntry.isOutput    = false;   ///< Bidirectional at discovery time
-            catEntry.backend     = dynamichardware::dhdo::BackendType::GPIO;
-            catEntry.backendData = dynamichardware::dhdo::GpioBackendData{
-                0,                        /* chipIndex */
-                i,                        /* lineOffset — used by factory and demos */
-                chipModel                 /* chipModel */
-            };
-            catalog_->addEntry(std::move(catEntry));
-        }
+        // Build descriptor for this available line.
+        dhdo::HardwareDescriptor desc{};
+        const std::string chipModel = variant_ == BoardVariant::RASPBERRY_PI_5 ? "BCM2712" :
+                                      variant_ == BoardVariant::RASPBERRY_PI_4 ? "BCM2711" : "GPIO";
+        desc.channelType = "DigitalIO";
+        desc.name        = chipModel + " GPIO " + std::to_string(i);
+        desc.isOutput    = false;   ///< Bidirectional at discovery time
+        desc.backend     = dhdo::BackendType::GPIO;
+        desc.backendData = dhdo::GpioBackendData{
+            0,                        /* chipIndex */
+            i,                        /* lineOffset — used by factory and demos */
+            chipModel                 /* chipModel */
+        };
 
+        results.push_back(std::move(desc));
         ++available;
     }
 
@@ -163,9 +153,37 @@ bool GPIODiscovery::discover()
     std::printf("[GPIO] Discovered %u available lines (%u skipped by kernel drivers)\n",
                 available, claimed);
 
-    // Release chip — discovery is done.
+    // Release chip — scan is a one-shot probe.
     reset();
-    return true;
+    return results;
+}
+
+// ---------------------------------------------------------------------------
+// discover() — thin wrapper: calls scan(), feeds results into catalog_.
+// Pure discovery: no DHDOEntry objects or hardware handles survive this call.
+// ---------------------------------------------------------------------------
+bool GPIODiscovery::discover()
+{
+    auto descriptors = scan();
+
+    if (!catalog_) {
+        std::fprintf(stderr, "[GPIO-Discovery] No catalog attached\n");
+        return false;
+    }
+
+    for (auto& desc : descriptors) {
+        dhdo::CatalogEntry entry{};
+        entry.channelType = desc.channelType;
+        entry.slaveName   = "";  // GPIO has no slave concept; populated from name/backendData instead
+        entry.name        = desc.name;
+        entry.isOutput    = desc.isOutput;
+        entry.backend     = desc.backend;
+        entry.backendData = std::move(desc.backendData);
+
+        catalog_->addEntry(std::move(entry));
+    }
+
+    return !descriptors.empty();
 }
 
 } // namespace dynamichardware::gpio

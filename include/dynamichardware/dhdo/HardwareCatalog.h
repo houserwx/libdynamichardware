@@ -395,6 +395,15 @@ public:
     /// Returns the number of purged entries.
     size_t purgeStaleEntries();
 
+    /// End discovery AND lock the catalog against further writes.
+    /// After calling this, addEntry/registerEcChannel will silently reject new entries.
+    /// Call purgeStaleEntries() internally for convenience.
+    void endDiscovery();
+
+    /// Query whether the catalog accepts write operations (addEntry/registerEcChannel).
+    /// Returns false after endDiscovery() is called or when writeLocked_ is true.
+    [[nodiscard]] bool isWritable() const noexcept { return !writeLocked_; }
+
     // ---- Registration (called during EtherCAT / I2C / SPI discovery) ----
 
    /// Register or look up an EtherCAT PDO channel.
@@ -438,6 +447,10 @@ private:
    // Discovery lifecycle: tracks which UUIDs were registered during current cycle.
     bool                            discoveryMode_{false};
     std::unordered_set<std::string> aliveUuids_;  ///< UUIDs marked alive since beginDiscovery()
+
+    /// Write lockdown — after endDiscovery() is called, the catalog becomes read-only.
+    /// Prevents post-discovery mutation (Issue B fix).
+    bool                            writeLocked_{false};
 
     void markAlive(const std::string& uuid);
     void rebuildIndices();

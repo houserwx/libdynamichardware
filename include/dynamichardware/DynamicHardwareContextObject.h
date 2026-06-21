@@ -98,6 +98,7 @@ public:
 
 private:
     friend class DynamicHardwareContextFactory;
+    friend class HardwareOrchestrator;
     template<class T> friend struct std::default_delete;
 
    struct Impl {
@@ -115,5 +116,9 @@ private:
     Impl impl_;
     State state_{State::ACTIVE};
 };
+
+/// Type alias for backward compatibility during transition period.
+/// RuntimeContext is the canonical name; DynamicHardwareContextObject kept for existing code.
+using RuntimeContext = DynamicHardwareContextObject;
 
 } // namespace dynamichardware

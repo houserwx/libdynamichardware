@@ -43,23 +43,34 @@ bool I2CRTBackend::buildRT()
 void I2CRTBackend::onBeforeReadInputs() noexcept {}
 void I2CRTBackend::onAfterWriteOutputs() noexcept {}
 
-int I2CRTBackend::registerDevice(uint8_t deviceAddr, std::string name,
-                                  std::vector<dynamichardware::dhdo::EntryType> entryTypes)
+// ---------------------------------------------------------------------------
+// IRuntimeAdapter::setCatalog()
+// ---------------------------------------------------------------------------
+void I2CRTBackend::setCatalog(const dynamichardware::dhdo::HardwareCatalog* catalog) noexcept
 {
-    Device device{};
-    device.address = deviceAddr;
-    device.name    = std::move(name);
+    catalog_ = catalog;
+}
 
-    for (const auto& type : entryTypes) {
-        dynamichardware::dhdo::DHDOEntry entry{};
-        entry.type = type;
-        entry.uuid = "i2c:" + std::to_string(deviceAddr) + ":" + std::to_string(device.entries.size());
-        device.entries.push_back(&entry);
+// ---------------------------------------------------------------------------
+// IDHDOBuilder::build(channels) — populate devices from mapped channels.
+// Stub implementation: collects channel info but doesn't access real hardware yet.
+// ---------------------------------------------------------------------------
+bool I2CRTBackend::build(const std::vector<dynamichardware::dhdo::MappedChannel>& channels)
+{
+    // Group channels by backend data (device address).
+    if (!channels.empty()) {
+        Device device{};
+        for (const auto& ch : channels) {
+            dynamichardware::dhdo::DHDOEntry entry{};
+            entry.type = ch.type;
+            entry.uuid = ch.uuid;
+            device.entries.push_back(&entry);
+        }
+        device.name = "I2C-Device";
+        devices_.push_back(std::move(device));
     }
 
-    const int idx = static_cast<int>(devices_.size());
-    devices_.push_back(std::move(device));
-    return idx;
+    return buildRT();  // Delegate to existing PDO construction logic.
 }
 
 bool I2CRTBackend::writeRegister(uint8_t addr, uint8_t reg, uint8_t value) noexcept {

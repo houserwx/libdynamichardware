@@ -40,6 +40,11 @@ set(LD_SOURCES
     # Simulated backend (split discovery + RT)
     src/dynamichardware/backends/simulated/SimulatedDiscovery.cpp
     src/dynamichardware/backends/simulated/SimulatedRTBackend.cpp
+    # Config infrastructure (Phase 1 — SOLID refactoring)
+    src/config/BackendRegistry.cpp
+    # Builder + Orchestrator split (Phase 6 — Issue E SRP fix)
+    src/DynamicHardwareBuilder.cpp
+    src/HardwareOrchestrator.cpp
 )
 
 add_library(dynamichardware STATIC ${LD_SOURCES})
@@ -280,6 +285,9 @@ if(BUILD_TESTS)
         tests/test_dhdo_factory.cpp
         tests/test_hardware_registry.cpp
         tests/test_hardware_catalog.cpp
+        # Phase 7 — Tests for refactoring infrastructure
+        tests/test_phase_manager.cpp
+        tests/test_backend_registry.cpp
     )
 
     add_executable(unit_tests ${TEST_SOURCES})

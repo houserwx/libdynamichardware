@@ -42,23 +42,33 @@ bool SPIRTBackend::buildRT()
 void SPIRTBackend::onBeforeReadInputs()  noexcept {}
 void SPIRTBackend::onAfterWriteOutputs() noexcept {}
 
-int SPIRTBackend::registerDevice(uint8_t chipSelect, std::string name,
-                                  std::vector<dynamichardware::dhdo::EntryType> entryTypes)
+// ---------------------------------------------------------------------------
+// IRuntimeAdapter::setCatalog()
+// ---------------------------------------------------------------------------
+void SPIRTBackend::setCatalog(const dynamichardware::dhdo::HardwareCatalog* catalog) noexcept
 {
-    Device device{};
-    device.chipSelect = chipSelect;
-    device.name       = std::move(name);
+    catalog_ = catalog;
+}
 
-    for (const auto& type : entryTypes) {
-        dynamichardware::dhdo::DHDOEntry entry{};
-        entry.type   = type;
-        entry.uuid   = "spi:" + std::to_string(chipSelect) + ":" + std::to_string(device.entries.size());
-        device.entries.push_back(&entry);
+// ---------------------------------------------------------------------------
+// IDHDOBuilder::build(channels) — populate devices from mapped channels.
+// Stub implementation: collects channel info but doesn't access real hardware yet.
+// ---------------------------------------------------------------------------
+bool SPIRTBackend::build(const std::vector<dynamichardware::dhdo::MappedChannel>& channels)
+{
+    if (!channels.empty()) {
+        Device device{};
+        for (const auto& ch : channels) {
+            dynamichardware::dhdo::DHDOEntry entry{};
+            entry.type = ch.type;
+            entry.uuid = ch.uuid;
+            device.entries.push_back(&entry);
+        }
+        device.name = "SPI-Device";
+        devices_.push_back(std::move(device));
     }
 
-    const int idx = static_cast<int>(devices_.size());
-    devices_.push_back(std::move(device));
-    return idx;
+    return buildRT();  // Delegate to existing PDO construction logic.
 }
 
 bool SPIRTBackend::transfer(uint8_t cs, const uint8_t* tx, uint8_t* rx, size_t len) noexcept {

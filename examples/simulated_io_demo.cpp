@@ -3,7 +3,8 @@
 //
 // Demonstrates:
 //   1. Building simulated adapter definitions with SimulatedDefinitionBuilder
-//   2. Creating and building a DynamicHardwareContext (lifecycle)
+//   2. Using DynamicHardwareBuilder (fluent API backed by BackendRegistry + orchestrator)
+//      instead of the legacy DynamicHardwareContextFactory (fixes Issues C, D, E, F)
 //   3. Freezing PDOs for RT operation
 //   4. Running an RT read/process/write loop using cached entry pointers
 // ============================================================================
@@ -14,7 +15,8 @@
 #include <chrono>
 #include <thread>
 
-#include "dynamichardware/DynamicHardwareContext.h"
+#include "dynamichardware/DynamicHardwareBuilder.h"
+#include "dynamichardware/SimulatedDefinitionBuilder.h"
 
 using namespace dynamichardware;
 
@@ -57,21 +59,25 @@ int main()
     }
 
     // ------------------------------------------------------------------
-    // Step 2: Discover hardware using the factory API.
+    // Step 2: Discover hardware using the new builder API.
+    //         The builder delegates to HardwareOrchestrator which iterates over
+    //         BackendRegistry instead of hardcoding backend types (fixes C/D/E).
     // ------------------------------------------------------------------
-    DynamicHardwareContextFactory factory;
-    factory.catalogPath("hardware.json")
-           .withSimulation("SimulatedAdapterDefinitions.json");
+    DynamicHardwareBuilder builder;
+    builder.catalogPath("hardware.json")
+           .enableBackend("Simulated", {{"definitionsPath", "SimulatedAdapterDefinitions.json"}});
 
-    if (!factory.discover()) {
+    if (!builder.discover()) {
         std::fprintf(stderr, "[Demo] Discovery failed\n");
         return 1;
     }
 
     // ------------------------------------------------------------------
     // Step 3: Build RT context from discovered data.
+    //         Orchestrator filters mapped channels per-backend and calls build() — no
+    //         public setup methods exposed to consumers (fixes A/F/H).
     // ------------------------------------------------------------------
-    auto ctx = factory.buildRT();
+    auto ctx = builder.buildRT();
     if (!ctx) {
         std::fprintf(stderr, "[Demo] RT context build failed\n");
         return 1;

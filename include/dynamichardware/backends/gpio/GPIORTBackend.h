@@ -1,5 +1,6 @@
 #pragma once
-#include "dynamichardware/dhdo/IRTBackend.h"
+#include "dynamichardware/dhdo/IRuntimeAdapter.h"
+#include "dynamichardware/dhdo/HardwareCatalog.h"
 #include "dynamichardware/backends/gpio/BoardVariant.h"
 
 #include <string>
@@ -44,33 +45,39 @@ struct GPIOLine {
 };
 
 /// ---- GPIORTBackend -------------------------------------------------------
-/// Real-time GPIO backend for I/O cycles. Implements IRTBackend.
+/// Real-time GPIO backend for I/O cycles.
 ///
 /// Fully independent of discovery: opens its own chip handle in buildRT(),
 /// reads catalog entries discovered by GPIODiscovery, builds PDOs from scratch.
-class GPIORTBackend final : public dynamichardware::dhdo::IRTBackend {
+class GPIORTBackend final
+    : public dynamichardware::dhdo::IRuntimeAdapter {
 public:
     GPIORTBackend();
     GPIORTBackend(BoardVariant variant, std::string chipPath);
 
     ~GPIORTBackend() override;
 
-    // --- IRTBackend implementation ------------------------------------------
-    [[nodiscard]] bool buildRT() override;
-    void activate() override { deferredActivate(); }
+    // --- RT lifecycle methods ----------------------------------------------
+    /// Build PDO structure from consumer-selected entries and allocate image buffers.
+    [[nodiscard]] bool buildRT();
+    /// Activate hardware handles / resources for registered lines only.
+    void activate() { deferredActivate(); }
+    /// Pre-read hook: backend fills process image with fresh data.
     void onBeforeReadInputs()  noexcept override;
+    /// Post-write hook: backend flushes process image to physical hardware.
     void onAfterWriteOutputs() noexcept override;
+
+    // --- Builder interface -------------------------------------------------
+    /// Set catalog reference so backend can resolve UUIDs internally.
+    /// Called by orchestrator/factory BEFORE build(channels).
+    void setCatalog(const dynamichardware::dhdo::HardwareCatalog* catalog) noexcept;
+
+    /// Build RT state from mapped channel list. Looks up each UUID in the catalog
+    /// and constructs internal GPIOLine entries without exposing GpioBackendData.
+    [[nodiscard]] bool build(const std::vector<dynamichardware::dhdo::MappedChannel>& channels) override;
 
     /// Legacy compatibility wrapper — delegates to buildRT().
     void deferredActivate();
-
-    /// Register a GPIO line for use in the process image. Must be called before buildRT().
-    /// Called by DynamicHardwareContext during consumer configuration phase.
-    /// @param uuid  Optional catalog UUID — if provided, DHDOEntry.uuid will match it
-    ///               for lookup resolution; otherwise falls back to legacy format.
-    int registerLine(uint32_t gpio_offset, LineDirection direction, std::string name,
-                     dynamichardware::dhdo::EntryType entryType,
-                     const std::string& uuid = "");
 
     [[nodiscard]] BoardVariant boardVariant() const noexcept { return variant_; }
     [[nodiscard]] std::size_t  lineCount()     const noexcept { return lines_.size(); }
@@ -78,6 +85,7 @@ public:
     [[nodiscard]] bool         isStubMode()    const noexcept { return stubMode_; }
 
 private:
+    const dynamichardware::dhdo::HardwareCatalog* catalog_{nullptr};
 #if HAS_LIBGPIOD
     struct gpiod_chip*   chipHandle_{nullptr};
 #else
@@ -100,6 +108,9 @@ private:
         uint64_t toggleCycle{0};
     };
     std::vector<StubState> stubStates_;
+
+    /// Populate lines_ vector from MappedChannel list using catalog lookups.
+    void populateLinesFromChannels(const std::vector<dynamichardware::dhdo::MappedChannel>& channels);
 
     /// Internal helpers called from buildRT().
     bool openChip() noexcept;

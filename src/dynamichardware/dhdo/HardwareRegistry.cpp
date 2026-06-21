@@ -4,7 +4,11 @@
 
 namespace dynamichardware::dhdo {
 
-void HardwareRegistry::addBackend(std::unique_ptr<IRTBackend> adapter)
+// ---- Init phase -----------------------------------------------------
+// Registry is friend of IRuntimeAdapter so it can iterate mutable dhdos_
+// during freeze and RT sweeps.
+
+void HardwareRegistry::addBackend(std::unique_ptr<IRuntimeAdapter> adapter)
 {
     if (frozen_) {
         throw std::logic_error("addBackend() after freezeForRt()");
@@ -49,7 +53,7 @@ void HardwareRegistry::freezeForRt()
 }
 
 // ---- RT cycle -------------------------------------------------------
-// Registry is friend of IRTBackend so it can iterate mutable dhdos_
+// Registry is friend of IRuntimeAdapter so it can iterate mutable dhdos_
 // during freeze and RT sweeps.
 
 void HardwareRegistry::readAll() noexcept

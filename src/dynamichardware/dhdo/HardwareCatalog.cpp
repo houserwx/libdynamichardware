@@ -304,6 +304,9 @@ bool HardwareCatalog::save(const std::string& path) const
 // ---------------------------------------------------------------------------
 void HardwareCatalog::beginDiscovery()
 {
+    // Clear write lock at start of discovery — catalog becomes writable again.
+    writeLocked_ = false;
+
     // Snapshot: all currently-loaded UUIDs are potentially stale.
     // During this cycle, anything registered via addEntry or registerEcChannel
     // will be marked "alive"; anything not re-seen gets purged by purgeStaleEntries().
@@ -317,7 +320,6 @@ size_t HardwareCatalog::purgeStaleEntries()
         std::printf("[Catalog] Not in discovery mode — skipping purge\n");
         return 0;
     }
-    discoveryMode_ = false;
 
     size_t purged = 0;
     auto writeIt = entries_.begin();
@@ -333,12 +335,24 @@ size_t HardwareCatalog::purgeStaleEntries()
     entries_.erase(writeIt, entries_.end());
 
     rebuildIndices();
+    discoveryMode_ = false;
+
     if (purged > 0) {
         std::printf("[Catalog] Purged %zu stale entries (%zu remaining)\n", purged, entries_.size());
     } else {
         std::printf("[Catalog] No stale entries to purge\n");
     }
     return purged;
+}
+
+void HardwareCatalog::endDiscovery()
+{
+    // Purge stale entries first (exits discovery mode internally).
+    purgeStaleEntries();
+
+    // Lock catalog against further writes after discovery completes.
+    writeLocked_ = true;
+    std::printf("[Catalog] Write lock engaged — catalog is now read-only\n");
 }
 
 void HardwareCatalog::markAlive(const std::string& uuid)
@@ -363,6 +377,16 @@ const CatalogEntry& HardwareCatalog::registerEcChannel(
     bool        isOutput
 )
 {
+     // Write lock guard — reject mutations after discovery ends.
+    if (writeLocked_) {
+        static int warnCount = 0;
+        if (warnCount++ < 3) {
+            std::fprintf(stderr, "[Catalog] REJECTED registerEcChannel: catalog is write-locked\n");
+        }
+        // Return existing entry or static dummy to avoid nullptr deref.
+        static CatalogEntry dummy{};
+        return entries_.empty() ? dummy : entries_[0];
+    }
    // Build backend data struct first — UUID is derived from this.
     EthercatBackendData bd{
         vendorId,         /* vendorId */
@@ -411,6 +435,15 @@ const CatalogEntry& HardwareCatalog::registerEcChannel(
 
 void HardwareCatalog::addEntry(CatalogEntry entry)
 {
+    // Write lock guard — reject mutations after discovery ends.
+    if (writeLocked_) {
+        static int warnCount = 0;
+        if (warnCount++ < 3) {
+            std::fprintf(stderr, "[Catalog] REJECTED addEntry: catalog is write-locked\n");
+        }
+        return;
+    }
+
     // Generate deterministic UUID from backend data if not already set.
     if (entry.uuid.empty() || entry.uuid == "00000000-0000-0000-0000-000000000000") {
         entry.uuid = entry.makeUuidFromBackend(entry.backend, entry.backendData);

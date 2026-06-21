@@ -1,5 +1,6 @@
 #pragma once
-#include "dynamichardware/dhdo/IRTBackend.h"
+#include "dynamichardware/dhdo/IRuntimeAdapter.h"
+#include "dynamichardware/dhdo/HardwareCatalog.h"
 
 #include <string>
 #include <vector>
@@ -8,23 +9,25 @@
 namespace dynamichardware::spi {
 
 /// ---- SPIRTBackend --------------------------------------------------------
-/// Real-time SPI process-data backend. Implements IRTBackend.
+/// Real-time SPI process-data backend.
 /// Fully independent of discovery — acquires own resources in buildRT().
-class SPIRTBackend final : public dynamichardware::dhdo::IRTBackend {
+class SPIRTBackend final
+    : public dynamichardware::dhdo::IRuntimeAdapter {
 public:
     explicit SPIRTBackend(std::string busPath);
     ~SPIRTBackend() override = default;
 
-    [[nodiscard]] bool buildRT() override;
+    // --- RT lifecycle methods ----------------------------------------------
+    [[nodiscard]] bool buildRT();
     void onBeforeReadInputs()  noexcept override;
     void onAfterWriteOutputs() noexcept override;
 
-    /// Register an SPI device before calling buildRT(). Returns device index.
-    /// Called by DynamicHardwareContext during consumer configuration phase — NOT by external consumers directly.
-    int registerDevice(uint8_t chipSelect, std::string name,
-                       std::vector<dynamichardware::dhdo::EntryType> entryTypes);
+    // --- Builder interface -------------------------------------------------
+    void setCatalog(const dynamichardware::dhdo::HardwareCatalog* catalog) noexcept;
+    [[nodiscard]] bool build(const std::vector<dynamichardware::dhdo::MappedChannel>& channels) override;
 
-private:
+ private:
+    const dynamichardware::dhdo::HardwareCatalog* catalog_{nullptr};
     struct Device {
         uint8_t   bus{0};
         uint8_t   chipSelect{0};

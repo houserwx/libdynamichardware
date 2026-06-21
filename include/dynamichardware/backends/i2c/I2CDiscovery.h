@@ -1,5 +1,6 @@
 #pragma once
-#include "dynamichardware/dhdo/IDiscoveryBackend.h"
+#include "dynamichardware/dhdo/IBackendScanner.h"
+#include "dynamichardware/dhdo/HardwareCatalog.h"
 
 #include <string>
 
@@ -22,10 +23,14 @@
 
 namespace dynamichardware::i2c {
 
-class I2CDiscovery final : public dynamichardware::dhdo::IDiscoveryBackend {
+class I2CDiscovery final
+    : public dynamichardware::dhdo::IBackendScanner {
 public:
     explicit I2CDiscovery(std::string busPath);
     ~I2CDiscovery() override = default;
+
+    /// Attach target catalog — discover() will register entries here after scan().
+    void setCatalog(dhdo::HardwareCatalog* catalog) noexcept { catalog_ = catalog; }
 
     // Non-copyable, non-movable
     I2CDiscovery(const I2CDiscovery&)            = delete;
@@ -33,12 +38,15 @@ public:
     I2CDiscovery(I2CDiscovery&&)                 = delete;
     I2CDiscovery& operator=(I2CDiscovery&&)      = delete;
 
-    /// Validate I2C bus accessibility and populate catalog from any detected devices.
-    /// Returns true if at least one device found (or stub mode succeeds).
-    [[nodiscard]] bool discover() override;
+    /// Pure data scan — returns descriptors without mutating catalog.
+    [[nodiscard]] std::vector<dhdo::HardwareDescriptor> scan() override;
+
+    /// Legacy wrapper — calls scan(), feeds results into catalog_.
+    [[nodiscard]] bool discover();
 
 private:
-    std::string busPath_;
+    std::string            busPath_;
+    dhdo::HardwareCatalog* catalog_{nullptr};
 
     /// Check if the given bus path is accessible.
     bool validateBus() noexcept;

@@ -1,12 +1,11 @@
 // ============================================================================
 // gpio_correct_demo.cpp — Example consumer program for libdynamichardware.
 //
-// Demonstrates the CORRECT pattern for non-EtherCAT backends:
-//   1. Build a DynamicHardwareContext with the GPIO backend enabled
-//   2. Discover hardware — populates catalog with all available GPIO lines
-//   3. Consumer inspects catalog entries and selectively defines channels
-//      using entry UUIDs (NOT by parsing raw key strings)
-//   4. Build RT context from discovered data + consumer definitions
+// Demonstrates the CORRECT pattern for non-EtherCAT backends using the new builder API:
+//   1. Use DynamicHardwareBuilder instead of DynamicHardwareContextFactory (fixes C/D/E)
+//   2. Discover hardware — populates catalog via BackendRegistry iteration (no hardcoded types)
+//   3. Consumer inspects catalog entries and selectively defines channels using mapChannel()
+//   4. Build RT context — orchestrator passes mapped channels TO backends as parameters (fixes F)
 //   5. Freeze — locks entries for RT operation
 //   6. Cache live DHDOEntry pointers by resolving through catalog metadata
 //   7. Walk through each output (chaser / "running lights" pattern):
@@ -19,7 +18,7 @@
 #include <thread>
 #include <vector>
 
-#include "dynamichardware/DynamicHardwareContext.h"
+#include "dynamichardware/DynamicHardwareBuilder.h"
 
 using namespace dynamichardware;
 
@@ -29,30 +28,36 @@ int main()
     std::printf("  libdynamichardware — GPIO Digital Output Demo\n");
     std::printf("==========================================================\n\n");
 
-    // ------------------------------------------------------------------
-    // Step 1: Discover hardware using the factory API.
-    //         This scans available GPIO lines and populates the catalog.
+   // ------------------------------------------------------------------
+    // Step 1: Discover hardware using the new builder API.
+    //         This scans available GPIO lines via BackendRegistry iteration 
+    //         and populates the catalog. No hardcoded backend types in orchestrator.
     //         Catalog entries are bidirectional ("DigitalIO") at this stage.
     // ------------------------------------------------------------------
-    DynamicHardwareContextFactory factory;
-    factory.catalogPath("hardware.json").withGPIO();
+    DynamicHardwareBuilder builder;
+    builder.catalogPath("hardware.json").enableBackend("GPIO");
 
-    if (!factory.discover()) {
+    if (!builder.discover()) {
         std::fprintf(stderr, "[Demo] Discovery failed\n");
         return 1;
     }
 
     // ------------------------------------------------------------------
     // Step 2: Consumer inspects discovered catalog entries and defines which
-    //         channels to map, with what direction/type (via DHDOFactory).
+    //         channels to map, with what direction/type (via mapChannel()).
     //
-    // EtherCAT autobuilds from EEPROM as an idiosyncrasy of that backend.
-    // For GPIO (and I2C/SPI), the consumer explicitly defines each channel.
+    // All backends now use a unified interface through the builder — no more
+    // "EtherCAT autobuild idiosyncrasy" at the consumer level (fixes Issue G).
+    // Internally each backend may still have different behavior encapsulated inside.
     //
-    // CRITICAL: Use catalog entry metadata (entry.uuid) for defineChannel(),
+    // CRITICAL: Use catalog entry metadata (entry.uuid) for mapChannel(),
     //           NOT string-parsed keys. The catalog is the source of truth.
     // ------------------------------------------------------------------
 
+    // NOTE: At discovery time GPIO entries are bidirectional (isOutput == false,
+    //       channelType == "DigitalIO"). We filter on common fields only and let
+    //       mapChannel() specify the desired direction. Backend details hidden.
+    
     struct GpioCandidate {
         std::string uuid;      ///< Stable UUID from catalog entry — used for lookup
         std::string name;      ///< Human-readable display name from catalog
@@ -60,17 +65,12 @@ int main()
 
     std::vector<GpioCandidate> candidates;
 
-    const auto& catalog = factory.catalog().entries();
-
-    // NOTE: At discovery time GPIO entries are bidirectional (isOutput == false,
-    //       channelType == "DigitalIO"). We filter on common fields only and let
-    //       defineChannel() specify the desired direction. Backend details hidden.
     for (const auto& entry : catalog) {
         if (entry.channelType != "DigitalIO") continue;
 
-        // Define all discovered DigitalIO channels as outputs.
-        // The catalog gives us just {uuid, name} — that's all we need to map a channel.
-        factory.defineChannel(entry.uuid, dhdo::EntryType::BoolOutput);
+        // Map all discovered DigitalIO channels as outputs using the unified interface.
+        // The orchestrator passes these mapped channels TO backends as parameters (fixes F).
+        builder.mapChannel(entry.uuid, dhdo::EntryType::BoolOutput);
 
         candidates.push_back({entry.uuid, entry.name});
         std::printf("[DBG] Catalog candidate uuid=%s name=%s\n",
@@ -82,17 +82,18 @@ int main()
         return 1;
     }
 
-    std::printf("[Demo] Defined %u GPIO output channels:\n", static_cast<unsigned>(candidates.size()));
+    std::printf("[Demo] Mapped %u GPIO output channels:\n", static_cast<unsigned>(candidates.size()));
     for (size_t i = 0; i < candidates.size(); ++i) {
         std::printf("  [%zu] %s\n",
                     i, candidates[i].name.c_str());
     }
 
     // ------------------------------------------------------------------
-    // Step 3: Build RT context from discovered data + consumer definitions.
-    //         GPIORTBackend reads the definition list and creates DHDOEntries.
+    // Step 3: Build RT context from discovered data + consumer mappings.
+    //         Orchestrator filters channels per-backend and calls build(channels).
+    //         Backends look up their own catalog entries — no public setup methods (fixes A/H).
     // ------------------------------------------------------------------
-    auto ctx = factory.buildRT();
+    auto ctx = builder.buildRT();
     if (!ctx) {
         std::fprintf(stderr, "[Demo] RT context build failed\n");
         return 1;

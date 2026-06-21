@@ -1,27 +1,33 @@
 // ============================================================================
-// DynamicHardwareContextFactory — one-shot hardware scan + catalog update.
-// Owns: HardwareCatalog, backend enable flags, paths.
-// Does NOT own: RT backends or DHDOEntry objects (those live in ContextObject).
+// HardwareOrchestrator — internal phase coordination + backend iteration.
+// 
+// Extracted from DynamicHardwareContextFactory to fix Issue E (SRP violation).
+// Uses new interfaces exclusively: scan() for discovery, build(channels) for RT.
+// Old factory still works alongside; consumers migrate gradually in Phase 8.
 // ============================================================================
 
-#include "dynamichardware/DynamicHardwareContextFactory.h"
+#include "dynamichardware/HardwareOrchestrator.h"
 
 #include "dynamichardware/DynamicHardwareContextObject.h"
-
 #include "dynamichardware/dhdo/HardwareRegistry.h"
+#include "dynamichardware/dhdo/DHDOFactory.h"
 
+// Discovery backends
 #include "dynamichardware/backends/ethercat/EthercatDiscovery.h"
-#include "dynamichardware/backends/ethercat/EthercatRTBackend.h"
 #include "dynamichardware/backends/gpio/GPIODiscovery.h"
-#include "dynamichardware/backends/gpio/GPIORTBackend.h"
 #include "dynamichardware/backends/i2c/I2CDiscovery.h"
-#include "dynamichardware/backends/i2c/I2CRTBackend.h"
 #include "dynamichardware/backends/spi/SPIDiscovery.h"
-#include "dynamichardware/backends/spi/SPIRTBackend.h"
 #include "dynamichardware/backends/simulated/SimulatedDiscovery.h"
+
+// Runtime backends
+#include "dynamichardware/backends/ethercat/EthercatRTBackend.h"
+#include "dynamichardware/backends/gpio/GPIORTBackend.h"
+#include "dynamichardware/backends/i2c/I2CRTBackend.h"
+#include "dynamichardware/backends/spi/SPIRTBackend.h"
 #include "dynamichardware/backends/simulated/SimulatedRTBackend.h"
 
-#include "dynamichardware/dhdo/DHDOFactory.h"
+// For mapping persistence — need nlohmann::json for save/load mappings
+#include <nlohmann/json.hpp>
 
 #include <cstdio>
 #include <fstream>
@@ -29,85 +35,32 @@
 
 namespace dynamichardware {
 
-// ============================================================================
-// Fluent configuration
-// ============================================================================
+HardwareOrchestrator::HardwareOrchestrator(OrchestratorState state)
+    : state_(std::move(state)) {}
 
-DynamicHardwareContextFactory& DynamicHardwareContextFactory::catalogPath(std::string path)
-{
-    state_.catalogPath = std::move(path);
-    return *this;
-}
-
-DynamicHardwareContextFactory& DynamicHardwareContextFactory::withEthercat(uint32_t cycleNs)
-{
-    state_.enableEthercat = true;
-    state_.ethercatCycleNs = cycleNs;
-    return *this;
-}
-
-DynamicHardwareContextFactory& DynamicHardwareContextFactory::withGPIO()
-{
-    state_.enableGPIO = true;
-    return *this;
-}
-
-DynamicHardwareContextFactory& DynamicHardwareContextFactory::withI2C(std::string busPath)
-{
-    state_.enableI2C = true;
-    state_.i2cBusPath = std::move(busPath);
-    return *this;
-}
-
-DynamicHardwareContextFactory& DynamicHardwareContextFactory::withSPI(std::string busPath)
-{
-    state_.enableSPI = true;
-    state_.spiBusPath = std::move(busPath);
-    return *this;
-}
-
-DynamicHardwareContextFactory& DynamicHardwareContextFactory::withSimulation(
-        std::optional<std::string> definitionsPath)
-{
-    state_.enableSimulation = true;
-    state_.simDefinitionsPath = std::move(definitionsPath);
-    return *this;
-}
-
-DynamicHardwareContextFactory& DynamicHardwareContextFactory::defineChannel(
-        const std::string& keyOrUuid, dhdo::EntryType type,
-        const std::string& friendlyName)
-{
+void HardwareOrchestrator::addChannelDefinition(const std::string& keyOrUuid, 
+                                                 dhdo::EntryType type,
+                                                 const std::string& friendlyName) {
     ChannelDefinition def{};
     def.keyOrUuid    = keyOrUuid;
     def.type         = type;
     def.friendlyName = friendlyName;
     channelDefs_.push_back(std::move(def));
-    return *this;
 }
 
+const dhdo::HardwareCatalog& HardwareOrchestrator::catalog() const noexcept { return catalog_; }
+dhdo::HardwareCatalog& HardwareOrchestrator::catalog()       noexcept { return catalog_; }
+
 // ============================================================================
-// Mapping persistence — separate file from hardware catalog.
-// Catalog is write-once (discovery only); mappings persist user intent.
+// Mapping persistence helpers (extracted from old factory)
 // Format: { "mappings": [ { "uuid": ..., "type": "BoolOutput", "name": ... }, ... ] }
 // ============================================================================
 
-DynamicHardwareContextFactory& DynamicHardwareContextFactory::mappingPath(
-    std::string path)
-{
-    state_.mappingPath = std::move(path);
-    return *this;
-}
-
-size_t DynamicHardwareContextFactory::loadMappings()
-{
+size_t HardwareOrchestrator::loadMappings() {
     if (state_.mappingPath.empty()) return 0;
 
     std::ifstream f(state_.mappingPath);
-    if (!f) {
-        // No existing mapping file — first run or manual creation.
-        return 0;
-    }
+    if (!f) return 0;
 
     try {
         nlohmann::json j;
@@ -119,7 +72,6 @@ size_t DynamicHardwareContextFactory::loadMappings()
             def.keyOrUuid    = m.value("uuid", "");
             def.friendlyName = m.value("name", "");
 
-           // Map string back to EntryType.
             std::string typeStr = m.value("type", "BoolInput");
             def.type = dhdo::DHDOFactory::stringToEntryType(typeStr);
 
@@ -130,15 +82,13 @@ size_t DynamicHardwareContextFactory::loadMappings()
                     count, state_.mappingPath.c_str());
         return count;
     } catch (const std::exception& ex) {
-        std::fprintf(stderr,
-                     "[Mapping] Parse error loading '%s': %s\n",
+        std::fprintf(stderr, "[Mapping] Parse error loading '%s': %s\n",
                      state_.mappingPath.c_str(), ex.what());
         return 0;
     }
 }
 
-void DynamicHardwareContextFactory::saveMappings()
-{
+void HardwareOrchestrator::saveMappings() {
     if (state_.mappingPath.empty()) return;
 
     try {
@@ -147,7 +97,7 @@ void DynamicHardwareContextFactory::saveMappings()
 
         for (const auto& cdef : channelDefs_) {
             nlohmann::json entry;
-               entry["uuid"] = cdef.keyOrUuid;
+            entry["uuid"] = cdef.keyOrUuid;
             entry["type"] = dhdo::DHDOFactory::entryTypeToString(cdef.type);
             if (!cdef.friendlyName.empty()) {
                 entry["name"] = cdef.friendlyName;
@@ -172,24 +122,10 @@ void DynamicHardwareContextFactory::saveMappings()
 }
 
 // ============================================================================
-// Catalog access
+// Discovery phase — scan() pipeline feeds into catalog, then purge stale entries
 // ============================================================================
 
-const dhdo::HardwareCatalog& DynamicHardwareContextFactory::catalog() const noexcept { return catalog_; }
-dhdo::HardwareCatalog& DynamicHardwareContextFactory::catalog()       noexcept { return catalog_; }
-
-// ============================================================================
-// Discovery phase — scan physical hardware, update catalog, purge stale keys
-// ============================================================================
-
-bool DynamicHardwareContextFactory::discover()
-{
-    // Load existing catalog (preserves UUIDs across restarts)
-    catalog_.load(state_.catalogPath);
-
-    // Begin discovery cycle — any entry NOT re-registered by the end gets purged.
-    catalog_.beginDiscovery();
-
+bool HardwareOrchestrator::runDiscoveryScan() {
     bool anyDiscovered = false;
 
     // EtherCAT — one-shot scan via temporary object (all IgH resources released on scope exit)
@@ -258,6 +194,24 @@ bool DynamicHardwareContextFactory::discover()
         }
     }
 
+    return anyDiscovered;
+}
+
+bool HardwareOrchestrator::discover() {
+    // Phase starts at DISCOVERY by default; no advance needed on first call.
+    // If called again after reset, ensure we're in DISCOVERY:
+    if (!phaseManager_.isAt(config::HardwarePhase::DISCOVERY)) {
+        try { (void)phaseManager_.advance(config::HardwarePhase::DISCOVERY); } catch (...) {}
+    }
+
+    // Load existing catalog (preserves UUIDs across restarts)
+    catalog_.load(state_.catalogPath);
+
+    // Begin discovery cycle — any entry NOT re-registered by the end gets purged.
+    catalog_.beginDiscovery();
+
+    bool anyDiscovered = runDiscoveryScan();
+
     // Purge entries that were NOT re-registered during this discovery cycle.
     auto purged = catalog_.purgeStaleEntries();
     if (purged > 0) {
@@ -300,15 +254,27 @@ bool DynamicHardwareContextFactory::discover()
     // Persist current channel definitions (user's mapped channels).
     saveMappings();
 
+    // Advance to MAPPING phase after discovery completes (if not already there)
+    if (!phaseManager_.isAt(config::HardwarePhase::MAPPING)) {
+        (void)phaseManager_.advance(config::HardwarePhase::MAPPING);
+    }
+
     return anyDiscovered || totalEntries > 0;
 }
 
 // ============================================================================
-// Build RT context — create backends, register PDOs, move into ContextObject
+// Build RT context — create backends using build(channels), move into ContextObject
 // ============================================================================
 
-std::unique_ptr<DynamicHardwareContextObject> DynamicHardwareContextFactory::buildRT()
-{
+std::unique_ptr<DynamicHardwareContextObject> HardwareOrchestrator::buildRT() {
+    // Ensure we've advanced through MAPPING before BUILD_RT
+    if (!phaseManager_.isAt(config::HardwarePhase::MAPPING)) {
+        try { (void)phaseManager_.advance(config::HardwarePhase::MAPPING); } catch (...) {}
+    }
+    if (!phaseManager_.isAt(config::HardwarePhase::BUILD_RT)) {
+        (void)phaseManager_.advance(config::HardwarePhase::BUILD_RT);
+    }
+
     // Create RT backend objects and build them against the discovered catalog.
     dhdo::HardwareRegistry registry;
 
@@ -326,7 +292,7 @@ std::unique_ptr<DynamicHardwareContextObject> DynamicHardwareContextFactory::bui
         auto rtBackend = std::make_unique<gpio::GPIORTBackend>();
         auto variant = rtBackend->boardVariant();
         if (variant != gpio::BoardVariant::UNKNOWN) {
-            // Collect mapped channels for this backend — no backend-specific data types.
+            // Collect mapped channels for this backend — no backend-specific data types leak out.
             std::vector<dhdo::MappedChannel> gpioChannels;
             for (const auto& cdef : channelDefs_) {
                 const auto* catEntry = catalog_.findByUuid(cdef.keyOrUuid);
@@ -369,7 +335,8 @@ std::unique_ptr<DynamicHardwareContextObject> DynamicHardwareContextFactory::bui
     }
 
     if (state_.enableSimulation) {
-        auto rtBackend = std::make_unique<simulated::SimulatedRTBackend>(state_.simDefinitionsPath.value_or(""));
+        auto rtBackend = std::make_unique<simulated::SimulatedRTBackend>(
+                state_.simDefinitionsPath.value_or(""));
         std::printf("[RtBuild] Building Simulated backend...\n");
         if (rtBackend->buildRT()) {
             registry.addBackend(std::move(rtBackend));

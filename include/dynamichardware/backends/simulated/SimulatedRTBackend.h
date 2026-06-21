@@ -1,5 +1,6 @@
 #pragma once
-#include "dynamichardware/dhdo/IRTBackend.h"
+#include "dynamichardware/dhdo/IRuntimeAdapter.h"
+#include "dynamichardware/dhdo/HardwareCatalog.h"
 
 #include <string>
 #include <vector>
@@ -8,26 +9,32 @@
 namespace dynamichardware::simulated {
 
 /// ---- SimulatedRTBackend --------------------------------------------------
-/// Real-time simulated I/O backend. Implements IRTBackend.
+/// Real-time simulated I/O backend.
 ///
 /// Fully independent of discovery: parses JSON simdefs directly and builds
 /// PDOs + simulation state from scratch in buildRT(). Same source file that
 /// SimulatedDiscovery reads for catalog population, but RT backend owns its own data.
 /// Generates synthetic waveforms (square-wave toggle, linear increment, sinusoidal)
 /// in onBeforeReadInputs() — no real hardware involved.
-class SimulatedRTBackend final : public dynamichardware::dhdo::IRTBackend {
+class SimulatedRTBackend final
+    : public dynamichardware::dhdo::IRuntimeAdapter {
 public:
     explicit SimulatedRTBackend(std::string definitionsPath);
     ~SimulatedRTBackend() override = default;
 
     [[nodiscard]] const std::string& definitionsPath() const noexcept { return definitionsPath_; }
 
-    // --- IRTBackend implementation ------------------------------------------
-    [[nodiscard]] bool buildRT() override;
+    // --- RT lifecycle methods ----------------------------------------------
+    [[nodiscard]] bool buildRT();
     void onBeforeReadInputs()  noexcept override;
     void onAfterWriteOutputs() noexcept override;
 
-private:
+    // --- Builder interface -------------------------------------------------
+    void setCatalog(const dynamichardware::dhdo::HardwareCatalog* catalog) noexcept;
+    [[nodiscard]] bool build(const std::vector<dynamichardware::dhdo::MappedChannel>& channels) override;
+
+ private:
+    const dynamichardware::dhdo::HardwareCatalog* catalog_{nullptr};
     struct SimState {
         dynamichardware::dhdo::EntryType type{dynamichardware::dhdo::EntryType::BoolInput};
         uint32_t  byteOffset{0};

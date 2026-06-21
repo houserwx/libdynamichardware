@@ -1,5 +1,6 @@
 #pragma once
-#include "dynamichardware/dhdo/IRTBackend.h"
+#include "dynamichardware/dhdo/IRuntimeAdapter.h"
+#include "dynamichardware/dhdo/HardwareCatalog.h"
 
 #include <string>
 #include <vector>
@@ -8,26 +9,27 @@
 namespace dynamichardware::i2c {
 
 /// ---- I2CRTBackend --------------------------------------------------------
-/// Real-time I2C process-data backend. Implements IRTBackend.
+/// Real-time I2C process-data backend.
 ///
 /// Fully independent of discovery: acquires its own resources in buildRT(),
 /// registers devices via registerDevice() (called by DynamicHardwareContext), builds PDOs from scratch.
-class I2CRTBackend final : public dynamichardware::dhdo::IRTBackend {
+class I2CRTBackend final
+    : public dynamichardware::dhdo::IRuntimeAdapter {
 public:
     explicit I2CRTBackend(std::string busPath);
     ~I2CRTBackend() override = default;
 
-    // --- IRTBackend implementation ------------------------------------------
-    [[nodiscard]] bool buildRT() override;
+    // --- RT lifecycle methods ----------------------------------------------
+    [[nodiscard]] bool buildRT();
     void onBeforeReadInputs()  noexcept override;
     void onAfterWriteOutputs() noexcept override;
 
-    /// Register an I2C device before calling buildRT(). Returns device index.
-    /// Called by DynamicHardwareContext during consumer configuration phase — NOT by external consumers directly.
-    int registerDevice(uint8_t deviceAddr, std::string name,
-                       std::vector<dynamichardware::dhdo::EntryType> entryTypes);
+    // --- Builder interface -------------------------------------------------
+    void setCatalog(const dynamichardware::dhdo::HardwareCatalog* catalog) noexcept;
+    [[nodiscard]] bool build(const std::vector<dynamichardware::dhdo::MappedChannel>& channels) override;
 
-private:
+ private:
+    const dynamichardware::dhdo::HardwareCatalog* catalog_{nullptr};
     struct Device {
         uint8_t  bus{0};
         uint8_t  address{0};

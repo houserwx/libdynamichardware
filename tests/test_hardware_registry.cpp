@@ -2,18 +2,16 @@
 #include <dynamichardware/dhdo/HardwareRegistry.h>
 #include <dynamichardware/dhdo/HardwareCatalog.h>
 #include <dynamichardware/dhdo/DHDOFactory.h>
-#include <dynamichardware/dhdo/IDiscoveryBackend.h>
-#include <dynamichardware/dhdo/IRTBackend.h>
 #include <cstring>
 #include <memory>
 
 using namespace dynamichardware::dhdo;
 
 // ============================================================================
-// Test adapter — minimal dual-interface implementation for testing.
-// Inherits both IDiscoveryBackend (trivial discover) and IRTBackend (builds PDOs).
+// Test adapter — minimal implementation inheriting IRuntimeAdapter (canonical).
+// Builds PDOs and provides RT lifecycle hooks for unit testing HardwareRegistry.
 // ============================================================================
-class TestAdapter : public IDiscoveryBackend, public IRTBackend {
+class TestAdapter : public IRuntimeAdapter {
 public:
     void addEntry(const std::string& uuid, EntryType type, uint32_t offset, uint8_t bitLength) {
         DHDOEntry e;
@@ -24,12 +22,9 @@ public:
         entries_.push_back(std::move(e));
     }
 
-    // IDiscoveryBackend — trivial no-op discovery for tests
-    bool discover() override { return true; }
-
-    // IRTBackend — builds PDO structure from pre-added entries.
+    /// Builds PDO structure from pre-added entries.
     // Sets base pointer before freeze(); freeze() handles byteOffset rebasing.
-    bool buildRT() override {
+    bool buildRT() {
         dhdos_.resize(1);
         dhdos_[0].image.resize(64);
 
@@ -87,7 +82,7 @@ TEST_CASE("HardwareRegistry buildUuidMap populates lookup", "[registry]")
 {
     HardwareRegistry registry;
     auto adapter = std::make_unique<TestAdapter>();
-    adapter->discover();
+
     adapter->addEntry("test-uuid-001", EntryType::BoolInput, 0, 1);
     adapter->addEntry("test-uuid-002", EntryType::FloatInput, 4, 32);
     adapter->buildRT();
@@ -114,7 +109,7 @@ TEST_CASE("HardwareRegistry readAll calls adapter hooks and reads entries", "[re
 {
     HardwareRegistry registry;
     auto adapter = std::make_unique<TestAdapter>();
-    adapter->discover();
+
     adapter->addEntry("rt-test-bool", EntryType::BoolInput, 0, 1);
     adapter->addEntry("rt-test-float", EntryType::FloatInput, 4, 32);
     adapter->buildRT();
@@ -148,7 +143,7 @@ TEST_CASE("HardwareRegistry writeAll calls adapter hooks and writes entries", "[
 {
     HardwareRegistry registry;
     auto adapter = std::make_unique<TestAdapter>();
-    adapter->discover();
+
     adapter->addEntry("rt-test-out", EntryType::BoolOutput, 0, 1);
     adapter->buildRT();
     registry.addBackend(std::move(adapter));
@@ -173,7 +168,7 @@ TEST_CASE("HardwareRegistry freezeForRt sets frozen flag", "[registry]")
 {
     HardwareRegistry registry;
     auto adapter = std::make_unique<TestAdapter>();
-    adapter->discover();
+
     adapter->buildRT();
     registry.addBackend(std::move(adapter));
 
@@ -186,7 +181,7 @@ TEST_CASE("HardwareRegistry addBackend after freeze throws", "[registry]")
 {
     HardwareRegistry registry;
     auto adapter = std::make_unique<TestAdapter>();
-    adapter->discover();
+
     adapter->buildRT();
     registry.addBackend(std::move(adapter));
     registry.freezeForRt();
@@ -202,13 +197,11 @@ TEST_CASE("HardwareRegistry allBackendsHealthy returns correct state", "[registr
     HardwareRegistry registry;
     {
         auto a = std::make_unique<TestAdapter>();
-        a->discover();
         a->buildRT();
         registry.addBackend(std::move(a));
     }
     {
         auto b = std::make_unique<TestAdapter>();
-        b->discover();
         b->buildRT();
         registry.addBackend(std::move(b));
     }
@@ -224,7 +217,7 @@ TEST_CASE("HardwareRegistry entryCount returns total entries across backends", "
 {
     HardwareRegistry registry;
     auto adapter = std::make_unique<TestAdapter>();
-    adapter->discover();
+
     adapter->addEntry("ec-001", EntryType::BoolInput, 0, 1);
     adapter->addEntry("ec-002", EntryType::FloatInput, 4, 32);
     adapter->addEntry("ec-003", EntryType::Int16Input, 8, 16);
@@ -242,7 +235,7 @@ TEST_CASE("HardwareRegistry RT cycle skips message entries", "[registry]")
 {
     HardwareRegistry registry;
     auto adapter = std::make_unique<TestAdapter>();
-    adapter->discover();
+
     adapter->addEntry("msg-in", EntryType::MessageIn, 0, 0);
     adapter->addEntry("msg-out", EntryType::MessageOut, 8, 0);
     adapter->addEntry("normal-in", EntryType::BoolInput, 16, 1);
@@ -272,7 +265,7 @@ TEST_CASE("HardwareRegistry printState does not crash", "[registry]")
 {
     HardwareRegistry registry;
     auto adapter = std::make_unique<TestAdapter>();
-    adapter->discover();
+
     adapter->addEntry("print-test", EntryType::BoolInput, 0, 1);
     adapter->buildRT();
     registry.addBackend(std::move(adapter));
