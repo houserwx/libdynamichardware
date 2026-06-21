@@ -21,7 +21,10 @@
 #include "dynamichardware/backends/simulated/SimulatedDiscovery.h"
 #include "dynamichardware/backends/simulated/SimulatedRTBackend.h"
 
+#include "dynamichardware/dhdo/DHDOFactory.h"
+
 #include <cstdio>
+#include <fstream>
 #include <string>
 
 namespace dynamichardware {
@@ -72,13 +75,100 @@ DynamicHardwareContextFactory& DynamicHardwareContextFactory::withSimulation(
 }
 
 DynamicHardwareContextFactory& DynamicHardwareContextFactory::defineChannel(
-        const std::string& keyOrUuid, dhdo::EntryType type)
+        const std::string& keyOrUuid, dhdo::EntryType type,
+        const std::string& friendlyName)
 {
     ChannelDefinition def{};
-    def.keyOrUuid = keyOrUuid;
-    def.type      = type;
+    def.keyOrUuid    = keyOrUuid;
+    def.type         = type;
+    def.friendlyName = friendlyName;
     channelDefs_.push_back(std::move(def));
     return *this;
+}
+
+// ============================================================================
+// Mapping persistence — separate file from hardware catalog.
+// Catalog is write-once (discovery only); mappings persist user intent.
+// Format: { "mappings": [ { "uuid": ..., "type": "BoolOutput", "name": ... }, ... ] }
+// ============================================================================
+
+DynamicHardwareContextFactory& DynamicHardwareContextFactory::mappingPath(
+    std::string path)
+{
+    state_.mappingPath = std::move(path);
+    return *this;
+}
+
+size_t DynamicHardwareContextFactory::loadMappings()
+{
+    if (state_.mappingPath.empty()) return 0;
+
+    std::ifstream f(state_.mappingPath);
+    if (!f) {
+        // No existing mapping file — first run or manual creation.
+        return 0;
+    }
+
+    try {
+        nlohmann::json j;
+        f >> j;
+
+        size_t count = 0;
+        for (const auto& m : j.value("mappings", nlohmann::json::array())) {
+            ChannelDefinition def{};
+            def.keyOrUuid    = m.value("uuid", "");
+            def.friendlyName = m.value("name", "");
+
+           // Map string back to EntryType.
+            std::string typeStr = m.value("type", "BoolInput");
+            def.type = dhdo::DHDOFactory::stringToEntryType(typeStr);
+
+            channelDefs_.push_back(std::move(def));
+            ++count;
+        }
+        std::printf("[Mapping] Loaded %zu mappings from '%s'\n",
+                    count, state_.mappingPath.c_str());
+        return count;
+    } catch (const std::exception& ex) {
+        std::fprintf(stderr,
+                     "[Mapping] Parse error loading '%s': %s\n",
+                     state_.mappingPath.c_str(), ex.what());
+        return 0;
+    }
+}
+
+void DynamicHardwareContextFactory::saveMappings()
+{
+    if (state_.mappingPath.empty()) return;
+
+    try {
+        nlohmann::json j;
+        nlohmann::json arr = nlohmann::json::array();
+
+        for (const auto& cdef : channelDefs_) {
+            nlohmann::json entry;
+               entry["uuid"] = cdef.keyOrUuid;
+            entry["type"] = dhdo::DHDOFactory::entryTypeToString(cdef.type);
+            if (!cdef.friendlyName.empty()) {
+                entry["name"] = cdef.friendlyName;
+            }
+            arr.push_back(std::move(entry));
+        }
+
+        j["mappings"] = arr;
+
+        std::ofstream f(state_.mappingPath);
+        if (!f) {
+            std::fprintf(stderr, "[Mapping] Cannot open '%s' for writing\n",
+                         state_.mappingPath.c_str());
+            return;
+        }
+        f << j.dump(2) << '\n';
+        std::printf("[Mapping] Saved %zu mappings to '%s'\n",
+                    channelDefs_.size(), state_.mappingPath.c_str());
+    } catch (const std::exception& ex) {
+        std::fprintf(stderr, "[Mapping] Save error: %s\n", ex.what());
+    }
 }
 
 // ============================================================================
@@ -183,6 +273,33 @@ bool DynamicHardwareContextFactory::discover()
     std::printf("[Discover] Complete: %zu catalog entries (%s)\n",
                 totalEntries, anyDiscovered ? "new channels found" : "no new channels");
 
+    // Warn about previously-mapped UUIDs that no longer exist in current hardware scan.
+    if (!channelDefs_.empty()) {
+        size_t staleCount = 0;
+        for (const auto& cdef : channelDefs_) {
+            const auto* catEntry = catalog_.findByUuid(cdef.keyOrUuid);
+
+            if (!catEntry) {
+                ++staleCount;
+                std::fprintf(stderr,
+                    "[Mapping] WARNING: Previously-mapped entry '%s' "
+                    "(type=%s) no longer exists in discovered hardware!\n",
+                    cdef.keyOrUuid.c_str(),
+                    dhdo::DHDOFactory::entryTypeToString(cdef.type));
+            }
+        }
+        if (staleCount > 0) {
+            std::fprintf(stderr,
+                "[Mapping] %zu of %zu mapped entries are STALE — remap required.\n",
+                staleCount, channelDefs_.size());
+        } else {
+            std::printf("[Mapping] All %zu mapped entries still valid.\n", channelDefs_.size());
+        }
+    }
+
+    // Persist current channel definitions (user's mapped channels).
+    saveMappings();
+
     return anyDiscovered || totalEntries > 0;
 }
 
@@ -210,32 +327,28 @@ std::unique_ptr<DynamicHardwareContextObject> DynamicHardwareContextFactory::bui
         auto variant = rtBackend->boardVariant();
         if (variant != gpio::BoardVariant::UNKNOWN) {
             // Feed consumer-defined channels into the GPIO backend.
-            // Parse "GPIO|00|{line_num}" keys to extract line offset and register with correct direction/type.
+            // Uses structured fields from catalog entry (backendData for line offset).
             for (const auto& cdef : channelDefs_) {
-                const auto* catEntry = catalog_.findByKey(cdef.keyOrUuid);
+                const auto* catEntry = catalog_.findByUuid(cdef.keyOrUuid);
                 if (!catEntry) continue;
 
                 // Only accept GPIO entries — other backends handle their own definitions.
-                if (catEntry->key.substr(0, 5) != "GPIO|") continue;
-
-                // Extract line number from key "GPIO|chip|offset"
-                uint32_t gpioOffset = 0;
-                try {
-                    size_t lastSep = catEntry->key.rfind('|');
-                    if (lastSep != std::string::npos && lastSep + 1 < catEntry->key.size()) {
-                        gpioOffset = static_cast<uint32_t>(std::stoul(catEntry->key.substr(lastSep + 1)));
-                    }
-                } catch (...) {
-                    std::fprintf(stderr, "[RtBuild] Bad GPIO key: %s\n", catEntry->key.c_str());
+                if (catEntry->backend != dhdo::BackendType::GPIO)
                     continue;
-                }
+
+                // Read line offset from structured backend data.
+                auto* gd = std::get_if<dhdo::GpioBackendData>(&catEntry->backendData);
+                if (!gd) continue;
+                uint32_t gpioOffset = gd->lineOffset;
 
                 auto dir = dhdo::entryIsInput(cdef.type)
                              ? gpio::LineDirection::INPUT
                              : gpio::LineDirection::OUTPUT;
+                // Pass the catalog entry's deterministic UUID so DHDOEntry.uuid matches.
                 rtBackend->registerLine(gpioOffset, dir,
                     catEntry->name.empty() ? ("GPIO" + std::to_string(gpioOffset)) : catEntry->name,
-                    cdef.type);
+                    cdef.type,
+                    catEntry->uuid);
             }
 
             std::printf("[RtBuild] Building GPIO backend (%s)...\n",
@@ -278,7 +391,7 @@ std::unique_ptr<DynamicHardwareContextObject> DynamicHardwareContextFactory::bui
         }
     }
 
-    // Build name → UUID mapping from catalog (.uuid == .key now)
+    // Build name → UUID mapping from catalog using deterministic hash-based UUIDs
     DynamicHardwareContextObject::Impl ctxImpl{std::move(registry), std::move(catalog_), {}};
     for (const auto& entry : ctxImpl.catalog.entries()) {
         if (!entry.name.empty()) {

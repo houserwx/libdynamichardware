@@ -66,8 +66,11 @@ public:
 
     /// Register a GPIO line for use in the process image. Must be called before buildRT().
     /// Called by DynamicHardwareContext during consumer configuration phase.
+    /// @param uuid  Optional catalog UUID — if provided, DHDOEntry.uuid will match it
+    ///               for lookup resolution; otherwise falls back to legacy format.
     int registerLine(uint32_t gpio_offset, LineDirection direction, std::string name,
-                     dynamichardware::dhdo::EntryType entryType);
+                     dynamichardware::dhdo::EntryType entryType,
+                     const std::string& uuid = "");
 
     [[nodiscard]] BoardVariant boardVariant() const noexcept { return variant_; }
     [[nodiscard]] std::size_t  lineCount()     const noexcept { return lines_.size(); }
@@ -102,6 +105,7 @@ private:
     bool openChip() noexcept;
     bool requestLine(GPIOLine& line, size_t index) noexcept;
     void closeChip() noexcept;
+    void syncImagePointers();
 };
 
 } // namespace dynamichardware::gpio

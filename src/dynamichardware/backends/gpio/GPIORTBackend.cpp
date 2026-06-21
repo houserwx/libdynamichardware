@@ -76,22 +76,17 @@ bool GPIORTBackend::buildRT()
     }
 
     // Build PDO from registered lines only.
-    {
-        dynamichardware::dhdo::DHDO pdo;
+    {   dynamichardware::dhdo::DHDO pdo;
+        size_t byteOffset = 0;
         for (auto& line : lines_) {
             // Copy the value-owned entry into the PDO vector.
-            pdo.entries.emplace_back(line.entry);
+            auto e = line.entry;
+            e.byteOffset = byteOffset++;     // Each GPIO line owns one byte in the process image
+            pdo.entries.push_back(e);
         }
 
         if (!pdo.entries.empty()) {
-            pdo.image.resize(pdo.entries.size());
-            for (size_t i = 0; i < pdo.entries.size(); ++i) {
-                // Wire image pointer on the COPY inside the PDO vector.
-                pdo.entries[i].image = pdo.image.data() + i;
-                // ALSO wire it back to the ORIGINAL in lines_ so RT cycle methods 
-                // can safely access lines_[i].entry.image without null checks.
-                lines_[i].entry.image = pdo.image.data() + i;
-            }
+            pdo.image.resize(byteOffset);    // One byte per line — freeze() will re-base .image pointers
             dhdos_.push_back(std::move(pdo));
         }
     }
@@ -99,6 +94,21 @@ bool GPIORTBackend::buildRT()
     activated_ = true;
     std::printf("[GPIO] Built RT: %zu registered lines in process image\n", lines_.size());
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// syncImagePointers() — after PDO::freeze() sets .image on the PDO copies,
+// propagate them back into the originals so the backend's read/write hooks
+// can access valid image pointers from lines_[i].entry.image.
+// Called by GPIORTBackend (no public API — internal housekeeping).
+// ---------------------------------------------------------------------------
+void GPIORTBackend::syncImagePointers()
+{
+    if (dhdos_.empty()) return;
+    const auto& pdo = dhdos_[0];
+    for (size_t i = 0; i < lines_.size() && i < pdo.entries.size(); ++i) {
+        lines_[i].entry.image = pdo.entries[i].image;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -110,13 +120,12 @@ void GPIORTBackend::deferredActivate()
 }
 
 // ---------------------------------------------------------------------------
-// registerLine() — consumer calls this before buildRT() to select GPIO pins.
-// The structured key matches what GPIODiscovery registers in the catalog:
-//   "GPIO|00|{gpio_offset}"
-// This ensures DHDOEntry.uuid == CatalogEntry.key for lookup resolution.
+// registerLine() — THE CONSUMER SHOULD NEVER CALL THIS.  THIS IS SET UP INTERNALLY VIA THE this.Build();  The context should 
+// just do foreach(backend in backends) backend.buildRT(ListOfMapped DHDOEntries for this backend);  Each backend is responsible for knowing its own build needs.  
 // ---------------------------------------------------------------------------
 int GPIORTBackend::registerLine(uint32_t gpio_offset, LineDirection direction,
-                                 std::string name, dynamichardware::dhdo::EntryType entryType)
+                                 std::string name, dynamichardware::dhdo::EntryType entryType,
+                                 const std::string& uuid)
 {
     GPIOLine line{};
     line.offset     = gpio_offset;
@@ -125,7 +134,10 @@ int GPIORTBackend::registerLine(uint32_t gpio_offset, LineDirection direction,
 
     // Store DHDOEntry by value — no dangling pointer risk.
     line.entry.type      = entryType;
-    line.entry.uuid      = "GPIO|00|" + std::to_string(gpio_offset);  // Matches catalog discovery key
+    // Use provided catalog UUID if available; fall back to legacy format for compat.
+    line.entry.uuid      = uuid.empty()
+        ? ("GPIO|00|" + std::to_string(gpio_offset))
+        : uuid;
 
     const int idx = static_cast<int>(lines_.size());
     lines_.push_back(std::move(line));

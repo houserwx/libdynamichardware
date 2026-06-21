@@ -67,9 +67,29 @@ public:
     // For all other backends, the consumer defines which channels to create and with what type.
 
     /// Define a channel by catalog entry key or UUID, specifying its EntryType.
+    /// Optionally provide a human-readable name for display/mapping tools.
+    /// The mapping is persisted (if mappingPath was set) so it survives restarts.
     /// Call this between discover() and buildRT().
-    DynamicHardwareContextFactory& defineChannel(const std::string& keyOrUuid,
-                                                  dhdo::EntryType     type);
+    DynamicHardwareContextFactory& defineChannel(
+        const std::string&  keyOrUuid,
+        dhdo::EntryType     type,
+        const std::string&  friendlyName = "");
+
+    // ---- Mapping persistence ----
+
+    /// Set path for persisted channel mappings JSON file (default: no persistence).
+    /// When set, defineChannel() entries are saved after discover() and auto-replayed
+    /// on subsequent runs — consumers just need to call loadMappings() before defineChannel().
+    DynamicHardwareContextFactory& mappingPath(std::string path);
+
+    /// Load previously persisted mappings into the internal definition list.
+    /// Returns number of mappings loaded.  Call after discover(), then optionally
+    /// override specific channels with explicit defineChannel() calls.
+    size_t loadMappings();
+
+    /// Save current channel definitions to the mapping file.
+    /// Called automatically at end of discover() if mappingPath was set.
+    void saveMappings();
 
     // ---- Build RT context from discovered data ----
 
@@ -78,8 +98,9 @@ public:
     std::unique_ptr<DynamicHardwareContextObject> buildRT();
 
 private:
-    struct State {
+   struct State {
         std::string catalogPath{"hardware.json"};
+        std::string mappingPath;     ///< Optional path for persisted channel mappings JSON
 
         bool enableEthercat{false};
         uint32_t ethercatCycleNs{1'000'000u};
@@ -97,8 +118,9 @@ private:
     };
 
     struct ChannelDefinition {
-        std::string keyOrUuid;   ///< Catalog entry key or UUID to map
-        dhdo::EntryType type;    ///< Direction + value format for DHDOEntry
+        std::string keyOrUuid;     ///< Catalog entry key or UUID to map
+        dhdo::EntryType type;      ///< Direction + value format for DHDOEntry
+        std::string friendlyName;  ///< User-assigned display name (optional)
     };
 
     State state_;

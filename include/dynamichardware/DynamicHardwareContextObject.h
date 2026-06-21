@@ -52,7 +52,35 @@ public:
     /// List all discovered channels (debug / config inspection).
     [[nodiscard]] const std::vector<dhdo::CatalogEntry>& catalogEntries() const noexcept;
 
-    // ---- Health monitoring ----
+    // ---- Typed candidate queries (obfuscated — returns UUIDs only) ----
+    // These let consumers discover available channels without exposing raw keys.
+
+    /// Lightweight candidate: just UUID + human display name.
+    struct ChannelCandidate {
+        std::string uuid;          ///< Stable identifier for lookupByUuid()
+        std::string displayName;   ///< Human-readable: "GPIO17", "EL3632 ch0",
+                                   ///< or user-assigned logicalName if set
+        std::string channelType;   ///< "DigitalInput", "Int16Output", etc.
+        bool        isOutput{false};
+    };
+
+    /// Get candidates matching a specific EntryType bitmask filter.
+    /// Pass | to combine types, e.g., dhdo::BoolInput | dhdo::BoolOutput.
+    [[nodiscard]] std::vector<ChannelCandidate> getCandidates(uint8_t typeMask) const noexcept;
+
+    /// Convenience: all BoolInput candidates.
+    [[nodiscard]] std::vector<ChannelCandidate> getBoolInputCandidates() const noexcept;
+
+    /// Convenience: all BoolOutput candidates.
+    [[nodiscard]] std::vector<ChannelCandidate> getBoolOutputCandidates() const noexcept;
+
+    /// Convenience: all FloatInput candidates.
+    [[nodiscard]] std::vector<ChannelCandidate> getFloatInputCandidates() const noexcept;
+
+    /// Convenience: all FloatOutput candidates.
+    [[nodiscard]] std::vector<ChannelCandidate> getFloatOutputCandidates() const noexcept;
+
+ 
 
     /// Returns number of registered backends.
     [[nodiscard]] std::size_t backendCount() const noexcept;
@@ -72,10 +100,10 @@ private:
     friend class DynamicHardwareContextFactory;
     template<class T> friend struct std::default_delete;
 
-    struct Impl {
+   struct Impl {
         dhdo::HardwareRegistry registry;
         dhdo::HardwareCatalog  catalog;
-        std::unordered_map<std::string, std::string> nameToUuid;
+        std::unordered_map<std::string, std::string> nameToUuid;     ///< displayName → uuid
     };
 
     explicit DynamicHardwareContextObject(Impl&& impl);

@@ -23,19 +23,28 @@ TEST_CASE("HardwareCatalog saves and loads entries", "[catalog]")
     catalog.load(path);  // Load non-existent file — should not crash
     REQUIRE(catalog.empty());
 
-    // Add an entry
+    // Add an entry (populate backend-specific data via variant)
     CatalogEntry entry;
-    entry.key         = "EC|12345678|ABCDEF00|REV00010000|POS0001|0010:01";
-    entry.uuid        = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
     entry.channelType = "IMU_GyroX";
     entry.name        = "MPU6050[0x68] GyroX";
     entry.slaveName   = "MPU6050";
-    entry.slavePos    = 1;
     entry.isOutput    = false;
+    entry.backend     = BackendType::ETHERCAT;
+    entry.backendData = EthercatBackendData{
+        0x12345678, /* vendorId */
+        0xABCDEF00, /* productCode */
+        0x00010000, /* revisionNumber */
+        1,          /* slavePos */
+        0x10,       /* pdoIndex */
+        1           /* pdoSubindex */
+    };
 
     catalog.addEntry(std::move(entry));
     REQUIRE_FALSE(catalog.empty());
-    REQUIRE(catalog.findByKey("EC|12345678|ABCDEF00|REV00010000|POS0001|0010:01") != nullptr);
+    // UUID is deterministic hash of backend data — verify it's non-empty and we can find by it.
+    const auto& added = catalog.entries()[0];
+    REQUIRE(!added.uuid.empty());
+    REQUIRE(catalog.findByUuid(added.uuid) != nullptr);
 
     // Save
     REQUIRE(catalog.save(path) == true);
@@ -48,7 +57,7 @@ TEST_CASE("HardwareCatalog saves and loads entries", "[catalog]")
     // Load into a new catalog
     HardwareCatalog catalog2;
     REQUIRE(catalog2.load(path) == true);
-    REQUIRE(catalog2.findByKey("EC|12345678|ABCDEF00|REV00010000|POS0001|0010:01") != nullptr);
+    REQUIRE(catalog2.findByUuid(catalog.entries()[0].uuid) != nullptr);
 
     // Clean up
     std::filesystem::remove(path);
@@ -69,18 +78,29 @@ TEST_CASE("HardwareCatalog entries vector is accessible", "[catalog]")
 
     for (int i = 0; i < 3; i++) {
         CatalogEntry entry;
-        entry.key         = "EC|test|00000000|REV00000000|POS0001|0010:" + std::to_string(i);
         entry.channelType = "Test";
-        // NOTE: addEntry() forces .uuid == .key (identity system)
+        entry.backend     = BackendType::ETHERCAT;
+        // Give each entry distinct backend data so UUIDs differ
+        entry.backendData = EthercatBackendData{
+            0x12345678, /* vendorId */
+            0xABCDEF00, /* productCode */
+            0x00010000, /* revisionNumber */
+            1,          /* slavePos */
+            static_cast<uint16_t>(i),   /* pdoIndex - varies per entry */
+            1           /* pdoSubindex */
+        };
         catalog.addEntry(std::move(entry));
     }
 
     auto& entries = catalog.entries();
     CHECK(entries.size() == 3);
-    // uuid equals key per identity system
-    CHECK(entries[0].uuid == "EC|test|00000000|REV00000000|POS0001|0010:0");
-    CHECK(entries[1].uuid == "EC|test|00000000|REV00000000|POS0001|0010:1");
-    CHECK(entries[2].uuid == "EC|test|00000000|REV00000000|POS0001|0010:2");
+    // UUIDs are deterministic hashes of the key — verify they're non-empty and stable.
+    CHECK(!entries[0].uuid.empty());
+    CHECK(!entries[1].uuid.empty());
+    CHECK(!entries[2].uuid.empty());
+    // Each unique key produces a unique UUID.
+    CHECK(entries[0].uuid != entries[1].uuid);
+    CHECK(entries[1].uuid != entries[2].uuid);
 }
 
 TEST_CASE("HardwareCatalog lookup returns correct entry", "[catalog]")
@@ -88,18 +108,26 @@ TEST_CASE("HardwareCatalog lookup returns correct entry", "[catalog]")
     HardwareCatalog catalog;
 
     CatalogEntry entry;
-    entry.key         = "EC|lookup|00000000|REV00000000|POS0001|0010:01";
     entry.channelType = "DigitalInput";
-    // NOTE: addEntry() forces .uuid == .key (identity system)
+    entry.backend     = BackendType::ETHERCAT;
+    entry.backendData = EthercatBackendData{
+        0x12345678, /* vendorId */
+        0xABCDEF00, /* productCode */
+        0x00010000, /* revisionNumber */
+        1,          /* slavePos */
+        0x10,       /* pdoIndex */
+        1           /* pdoSubindex */
+    };
     catalog.addEntry(std::move(entry));
 
-    auto* found = catalog.findByKey("EC|lookup|00000000|REV00000000|POS0001|0010:01");
+    const std::string expectedUuid = catalog.entries()[0].uuid;
+    auto* found = catalog.findByUuid(expectedUuid);
     REQUIRE(found != nullptr);
-    CHECK(found->uuid == found->key);  // uuid equals key per identity system
+    CHECK(!found->uuid.empty());
     CHECK(found->channelType == "DigitalInput");
 
-    // Non-existent key
-    auto* notFound = catalog.findByKey("EC|missing|00000000|REV00000000|POS0001|0010:01");
+    // Non-existent UUID should return null
+    auto* notFound = catalog.findByUuid("non-existent-uuid-12345");
     CHECK(notFound == nullptr);
 }
 
@@ -150,11 +178,11 @@ TEST_CASE("HardwareCatalog simulated entry round-trip", "[catalog]")
     catalog.load(path);
 
     CatalogEntry entry;
-    entry.key         = "virt|sim-test-001";
-    entry.uuid        = "virt-sim-001-uuid";
     entry.channelType = "Int32Input";
     entry.name        = "Sim-Encoder-A";
     entry.isSimulated = true;
+    entry.backend     = BackendType::SIMULATED;
+    entry.backendData = SimulatedBackendData{};  // no runtime state for simulated
     entry.sim.incrementPerCycle = 5;
     entry.sim.minValue          = INT64_MIN;
     entry.sim.maxValue          = INT64_MAX;
@@ -166,7 +194,8 @@ TEST_CASE("HardwareCatalog simulated entry round-trip", "[catalog]")
     HardwareCatalog catalog2;
     REQUIRE(catalog2.load(path) == true);
 
-    auto* found = catalog2.findByKey("virt|sim-test-001");
+    const std::string savedUuid = catalog.entries()[0].uuid;
+    auto* found = catalog2.findByUuid(savedUuid);
     REQUIRE(found != nullptr);
     CHECK(found->isSimulated == true);
     CHECK(found->channelType == "Int32Input");

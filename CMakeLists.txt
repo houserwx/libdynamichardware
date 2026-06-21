@@ -179,15 +179,6 @@ if(ETHERCAT_AVAILABLE)
     target_include_directories(ethercat_demo PRIVATE ${ETHERCAT_INCLUDE_DIR})
 endif()
 
-add_executable(gpio_demo examples/gpio_demo.cpp)
-target_link_libraries(gpio_demo PRIVATE dynamichardware)
-target_include_directories(gpio_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-if(LIBGPIOD_FOUND)
-    target_compile_definitions(gpio_demo PRIVATE GPIO_LIBGPIOD_AVAILABLE)
-    if(LIBGPIOD_INCLUDE_DIR)
-        target_include_directories(gpio_demo PRIVATE ${LIBGPIOD_INCLUDE_DIR})
-    endif()
-endif()
 
 # Bare-metal libgpiod smoke test (no libdynamichardware dependencies)
 if(LIBGPIOD_FOUND)
@@ -206,7 +197,18 @@ if(LIBGPIOD_FOUND)
     endif()
 endif()
 
-install(TARGETS dh-discover ethercat_demo simulated_io_demo gpio_demo
+# GPIO demo (correct pattern — follows EtherCAT style)
+if(LIBGPIOD_FOUND)
+    add_executable(gpio_correct_demo examples/gpio_correct_demo.cpp)
+    target_link_libraries(gpio_correct_demo PRIVATE dynamichardware)
+    target_include_directories(gpio_correct_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_definitions(gpio_correct_demo PRIVATE GPIO_LIBGPIOD_AVAILABLE)
+    if(LIBGPIOD_INCLUDE_DIR)
+        target_include_directories(gpio_correct_demo PRIVATE ${LIBGPIOD_INCLUDE_DIR})
+    endif()
+endif()
+
+install(TARGETS dh-discover ethercat_demo simulated_io_demo
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 

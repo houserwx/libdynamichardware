@@ -147,15 +147,26 @@ bool EthercatDiscovery::discoverSlaves()
                         } else {
                             slaveName = static_cast<const char*>(si.name);
                         }
-                        std::string chanName = slaveName + " ch" + std::to_string(entry.subindex);
+                        std::string chanName = slaveName + "[pos" + std::to_string(static_cast<int>(pos)) +
+                                               "] ch" + std::to_string(static_cast<int>(entry.subindex));
 
-                        const char* ctype = inferChannelType(entry.bit_length, isOutput);
-                        catalog_->addEntry(dynamichardware::dhdo::CatalogEntry{
-                            k, "", ctype, chanName,
-                            slaveName,
-                            pos, si.product_code, si.revision_number,
-                            entry.index, entry.subindex, isOutput
-                        });
+                       const char* ctype = inferChannelType(entry.bit_length, isOutput);
+                        dynamichardware::dhdo::CatalogEntry catEntry{};
+                        // UUID will be auto-generated from backendData in addEntry().
+                        catEntry.channelType = ctype;
+                        catEntry.name        = chanName;
+                        catEntry.slaveName   = slaveName;
+                        catEntry.isOutput    = isOutput;
+                        catEntry.backend     = dynamichardware::dhdo::BackendType::ETHERCAT;
+                        catEntry.backendData = dynamichardware::dhdo::EthercatBackendData{
+                            si.vendor_id,       /* vendorId */
+                            si.product_code,    /* productCode */
+                            si.revision_number, /* revisionNumber */
+                            pos,                /* slavePos */
+                            entry.index,        /* pdoIndex */
+                            entry.subindex      /* pdoSubindex */
+                        };
+                        catalog_->addEntry(std::move(catEntry));
                         ++entryCountForSlave;
                     }
                 }

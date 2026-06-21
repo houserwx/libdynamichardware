@@ -62,16 +62,12 @@ int main()
     // Step 3: Collect all digital output (BoolOutput) channels from the 
     //         catalog and cache their DHDOEntry pointers.
     //
-    // NOTE: EtherCAT entries use structured keys as identifiers stored in 
-    //       DHDOEntry::uuid (e.g., "EC|2|157888594|POS3|28672:1"). The 
-    //       CatalogEntry::uuid field is a random GUID used only for persistence.
-    //       We match on entry.key to resolve live DHDOEntry pointers.
+    // Each catalog entry has a stable UUID derived from backend-specific fields.
+    // We use getDetails() to expose common info without touching raw backend data.
     // ------------------------------------------------------------------
     struct OutputInfo {
         dhdo::DHDOEntry* ptr{nullptr};
         std::string name;          ///< Human-readable display name
-        uint16_t slavePos{0};      ///< Slave position on bus
-        uint16_t pdoSubindex{0};   ///< PDO subindex (channel/pin number)
     };
 
     const auto& catalog = ctx->catalogEntries();
@@ -81,14 +77,15 @@ int main()
     for (const auto& entry : catalog) {
         if (!entry.isOutput || entry.channelType != "DigitalOutput") continue;
 
-        // Use the structured key — this is what DHDOEntry::uuid holds at runtime.
-        dhdo::DHDOEntry* ptr = ctx->lookupByUuid(entry.key);
+        // Resolve live DHDOEntry pointer using the stable catalog UUID.
+        dhdo::DHDOEntry* ptr = ctx->lookupByUuid(entry.uuid);
         if (ptr) {
-            // Build a human-friendly name from the structured key fields.
-            std::string displayName = entry.name.empty() ? entry.slaveName + "[ch" +
-                std::to_string(entry.pdoSubindex) + "]" : entry.name;
+            // Use the unified ChannelDetails view instead of raw backend fields.
+            auto details = entry.getDetails();
+            std::string displayName = details.name.empty() ? 
+                details.uuid.substr(0, 8) : details.name;
 
-            outputs.push_back({ptr, displayName, entry.slavePos, entry.pdoSubindex});
+            outputs.push_back({ptr, displayName});
         } else {
             // Stale catalog entry with no live PDO backing — skip silently.
             continue;
@@ -103,8 +100,7 @@ int main()
     std::printf("[Demo] Found %u digital output channel(s):\n", static_cast<unsigned>(outputs.size()));
 
     for (size_t i = 0; i < outputs.size(); ++i) {
-        std::printf("  [%2zu] Slave %u ch%u — %s\n",
-                    i, outputs[i].slavePos, outputs[i].pdoSubindex, outputs[i].name.c_str());
+        std::printf("  [%2zu] %s\n", i, outputs[i].name.c_str());
     }
 
    std::printf("[Demo] Running chaser pattern — each light ON for 3 seconds...\n");
@@ -146,9 +142,8 @@ int main()
                 auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
                     std::chrono::steady_clock::now() - startTime).count();
 
-                std::printf("[%lus] Lighting: Slave %u ch%u — %s\n",
-                            elapsed, outputs[currentLight].slavePos,
-                            outputs[currentLight].pdoSubindex,
+                 std::printf("[%lus] Lighting: %s\n",
+                            static_cast<unsigned long>(elapsed),
                             outputs[currentLight].name.c_str());
 
                 // Move to next output (wrap around).

@@ -216,18 +216,17 @@ static bool inspectCatalog(const std::vector<dynamichardware::dhdo::CatalogEntry
     if (entries.empty()) {
         std::printf("(empty catalog — no channels discovered)\n");
     } else {
-        std::printf("%-8s  %-28s  %-14s  %-20s  %s\n",
-                    "Output", "Key", "ChannelType", "UUID", "Name");
-        std::printf("%-8s  %-28s  %-14s  %-20s  %s\n",
-                    "------", "----------------------------", "--------------",
-                    "--------------------", "--------------------");
+        std::printf("%-8s  %-20s  %-14s  %s\n",
+                    "Out", "UUID", "ChannelType", "Name");
+        std::printf("%-8s  %-20s  %-14s  %s\n",
+                    "------", "--------------------", "--------------",
+                    "--------------------");
 
         for (const auto& e : entries) {
-            std::printf("%-8s  %-28s  %-14s  %s  %s\n",
+            std::printf("%-8s  %-20s  %-14s  %s\n",
                         e.isOutput ? "Y" : "N",
-                        e.key.c_str(),
-                        e.channelType.c_str(),
                         e.uuid.c_str(),
+                        e.channelType.c_str(),
                         e.name.c_str());
         }
     }

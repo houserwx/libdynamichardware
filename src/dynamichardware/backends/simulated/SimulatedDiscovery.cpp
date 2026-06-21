@@ -61,39 +61,46 @@ bool SimulatedDiscovery::discover()
         return false;
     }
 
-    for (const auto& ch : j["channels"]) {
-        std::string chanName = ch.value("name", "");
-        std::string simKey   = ch.value("uuid", "SIM|" + chanName);
+  for (const auto& ch : j["channels"]) {
+        // Use user-provided name if present, otherwise fall back to something sensible.
+       std::string chanName = ch.value("name", "");
+        if (chanName.empty()) {
+            chanName = "Simulated " + ch.value("channelType", "Channel");
+        }
+        // Use user-provided uuid as the channel identity for simulated entries.
+        std::string simUuid  = ch.value("uuid", "");
 
-        dynamichardware::dhdo::CatalogEntry entry{};
-        entry.key         = simKey;
-        entry.channelType = ch.value("channelType", "BoolInput");
-        entry.name        = chanName;
-        entry.slaveName   = "Simulated";
-        entry.isSimulated = true;
+        dynamichardware::dhdo::CatalogEntry catEntry{};
+        catEntry.uuid          = simUuid;  // User-defined UUID from JSON for simulated channels
+        catEntry.channelType   = ch.value("channelType", "BoolInput");
+       catEntry.name        = chanName;
+        catEntry.slaveName   = "Simulated";
+        catEntry.isSimulated = true;
+        catEntry.backend     = dynamichardware::dhdo::BackendType::SIMULATED;
+        catEntry.backendData = dynamichardware::dhdo::SimulatedBackendData{};
 
         dhdo::EntryType resolvedType{};
         bool isOutput{false};
-        resolveChannelType(entry.channelType, resolvedType, isOutput);
-        entry.isOutput = isOutput;
+       resolveChannelType(catEntry.channelType, resolvedType, isOutput);
+        catEntry.isOutput = isOutput;
 
         if (ch.contains("sim")) {
-            const auto& s = ch["sim"];
+           const auto& s = ch["sim"];
             // Generic rate-of-change parameters
-            entry.sim.togglePeriodMs     = s.value("togglePeriodMs", 0u);
-            entry.sim.dutyCyclePercent   = s.value("dutyCyclePercent", 50.0f);
-            entry.sim.incrementPerCycle  = s.value("incrementPerCycle", 1);
-            entry.sim.minValue           = s.value("minValue", static_cast<int64_t>(INT64_MIN));
-            entry.sim.maxValue           = s.value("maxValue", static_cast<int64_t>(INT64_MAX));
-            entry.sim.amplitude          = s.value("amplitude", 1.0f);
-            entry.sim.frequencyHz        = s.value("frequencyHz", 1.0f);
-            entry.sim.offset             = s.value("offset", 0.0f);
+            catEntry.sim.togglePeriodMs     = s.value("togglePeriodMs", 0u);
+            catEntry.sim.dutyCyclePercent   = s.value("dutyCyclePercent", 50.0f);
+            catEntry.sim.incrementPerCycle  = s.value("incrementPerCycle", 1);
+            catEntry.sim.minValue           = s.value("minValue", static_cast<int64_t>(INT64_MIN));
+            catEntry.sim.maxValue           = s.value("maxValue", static_cast<int64_t>(INT64_MAX));
+            catEntry.sim.amplitude          = s.value("amplitude", 1.0f);
+            catEntry.sim.frequencyHz        = s.value("frequencyHz", 1.0f);
+            catEntry.sim.offset             = s.value("offset", 0.0f);
             // I/O configuration
-            entry.sim.pulseMs            = s.value("pulseMs", 0u);
-            entry.sim.debounceMs         = s.value("debounceMs", 0u);
+            catEntry.sim.pulseMs            = s.value("pulseMs", 0u);
+            catEntry.sim.debounceMs         = s.value("debounceMs", 0u);
         }
 
-        catalog_->addEntry(std::move(entry));
+       catalog_->addEntry(std::move(catEntry));
     }
 
     std::printf("[Simulated-Discovery] Loaded %zu simulated channels from '%s'\n",

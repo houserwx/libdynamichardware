@@ -1,12 +1,15 @@
 // ============================================================================
-// gpio_demo.cpp — Example consumer program for libdynamichardware.
+// gpio_correct_demo.cpp — Example consumer program for libdynamichardware.
 //
-// Demonstrates:
-//   1. Building a DynamicHardwareContext with the GPIO backend enabled
-//   2. Inspecting discovered GPIO pins from the catalog
-//   3. Defining channels via DHDOFactory (.defineChannel()) to map specific
-//      pins as outputs before buildRT()
-//   4. Walking through each output (chaser / "running lights" pattern):
+// Demonstrates the CORRECT pattern for non-EtherCAT backends:
+//   1. Build a DynamicHardwareContext with the GPIO backend enabled
+//   2. Discover hardware — populates catalog with all available GPIO lines
+//   3. Consumer inspects catalog entries and selectively defines channels
+//      using entry UUIDs (NOT by parsing raw key strings)
+//   4. Build RT context from discovered data + consumer definitions
+//   5. Freeze — locks entries for RT operation
+//   6. Cache live DHDOEntry pointers by resolving through catalog metadata
+//   7. Walk through each output (chaser / "running lights" pattern):
 //      turn on one light for 3 seconds, then move to the next
 // ============================================================================
 
@@ -45,50 +48,44 @@ int main()
     //
     // EtherCAT autobuilds from EEPROM as an idiosyncrasy of that backend.
     // For GPIO (and I2C/SPI), the consumer explicitly defines each channel.
+    //
+    // CRITICAL: Use catalog entry metadata (entry.uuid) for defineChannel(),
+    //           NOT string-parsed keys. The catalog is the source of truth.
     // ------------------------------------------------------------------
 
     struct GpioCandidate {
-        std::string key;       ///< e.g., "GPIO|00|17"
-        uint32_t lineNum{0};   ///< Extracted GPIO offset
+        std::string uuid;      ///< Stable UUID from catalog entry — used for lookup
+        std::string name;      ///< Human-readable display name from catalog
     };
 
-    std::vector<GpioCandidate> outputs;
+    std::vector<GpioCandidate> candidates;
 
-    for (const auto& entry : factory.catalog().entries()) {
-        if (entry.key.substr(0, 5) != "GPIO|" || entry.channelType != "DigitalIO") continue;
+    const auto& catalog = factory.catalog().entries();
 
-        // Select a subset of GPIO lines to use as outputs.
-        // Pick pins commonly available on Raspberry Pi header:
-        //   GPIO17, GPIO27, GPIO22, GPIO23, GPIO24, GPIO25
-        uint32_t gpioOffset = 0;
-        try {
-            size_t lastSep = entry.key.rfind('|');
-            if (lastSep != std::string::npos && lastSep + 1 < entry.key.size()) {
-                gpioOffset = static_cast<uint32_t>(std::stoul(entry.key.substr(lastSep + 1)));
-            }
-        } catch (...) { continue; }
+    // NOTE: At discovery time GPIO entries are bidirectional (isOutput == false,
+    //       channelType == "DigitalIO"). We filter on common fields only and let
+    //       defineChannel() specify the desired direction. Backend details hidden.
+    for (const auto& entry : catalog) {
+        if (entry.channelType != "DigitalIO") continue;
 
-        constexpr int kOutputPins[] = {17, 27, 22, 23, 24, 25};
-        bool isDesiredPin = false;
-        for (int p : kOutputPins) {
-            if (static_cast<int>(gpioOffset) == p) { isDesiredPin = true; break; }
-        }
+        // Define all discovered DigitalIO channels as outputs.
+        // The catalog gives us just {uuid, name} — that's all we need to map a channel.
+        factory.defineChannel(entry.uuid, dhdo::EntryType::BoolOutput);
 
-        if (!isDesiredPin) continue;
-
-        // Define this pin as an output channel — adds to factory's internal list.
-        factory.defineChannel(entry.key, dhdo::EntryType::BoolOutput);
-        outputs.push_back({entry.key, gpioOffset});
+        candidates.push_back({entry.uuid, entry.name});
+        std::printf("[DBG] Catalog candidate uuid=%s name=%s\n",
+                    entry.uuid.c_str(), entry.name.c_str());
     }
 
-    if (outputs.empty()) {
+    if (candidates.empty()) {
         std::fprintf(stderr, "[Demo] No suitable GPIO pins found for demo.\n");
         return 1;
     }
 
-    std::printf("[Demo] Defined %u GPIO output channels:\n", static_cast<unsigned>(outputs.size()));
-    for (size_t i = 0; i < outputs.size(); ++i) {
-        std::printf("  [%zu] GPIO%u (key: %s)\n", i, outputs[i].lineNum, outputs[i].key.c_str());
+    std::printf("[Demo] Defined %u GPIO output channels:\n", static_cast<unsigned>(candidates.size()));
+    for (size_t i = 0; i < candidates.size(); ++i) {
+        std::printf("  [%zu] %s\n",
+                    i, candidates[i].name.c_str());
     }
 
     // ------------------------------------------------------------------
@@ -101,6 +98,9 @@ int main()
         return 1;
     }
 
+    // ------------------------------------------------------------------
+    // Step 4: Freeze — locks entries for RT operation.
+    // ------------------------------------------------------------------
     if (!ctx->freeze()) {
         std::fprintf(stderr, "[Demo] Context freeze failed\n");
         return 1;
@@ -112,23 +112,34 @@ int main()
                 ctx->allBackendsHealthy() ? "yes" : "no");
 
     // ------------------------------------------------------------------
-    // Step 4: Cache live DHDOEntry pointers by resolving keys at init-time.
-    //         These pointers are safe to use in the RT loop after freeze().
+    // Step 5: Cache live DHDOEntry pointers by resolving catalog UUIDs at
+    //         init-time. These pointers are safe to use in the RT loop after
+    //         freeze(). All backend-specific info is hidden behind the UUID lookup.
     // ------------------------------------------------------------------
     struct OutputInfo {
-        dhdo::DHDOEntry* ptr{nullptr};
-        uint32_t lineNum{0};
+        dhdo::DHDOEntry* ptr{nullptr};   ///< Writable RT entry (set value here)
+        std::string name;                 ///< Human-readable display name from catalog
     };
 
     std::vector<OutputInfo> gpioOuts;
 
-    for (const auto& out : outputs) {
-        dhdo::DHDOEntry* ptr = ctx->lookupByUuid(out.key);
-        if (ptr) {
-            gpioOuts.push_back({ptr, out.lineNum});
-        } else {
-            std::fprintf(stderr, "[Demo] Warning: lookupByUuid(%s) returned null — skipping\n", out.key.c_str());
+    // Resolve DHDOEntry pointers using the candidates we already defined.
+    // After freeze() all mapped UUIDs are live and ready for RT access.
+    for (size_t c = 0; c < candidates.size(); ++c) {
+        const auto& candidate = candidates[c];
+        dhdo::DHDOEntry* ptr = ctx->lookupByUuid(candidate.uuid);
+        std::printf("[DBG] lookupByUuid(%s) -> %s\n",
+                    candidate.uuid.c_str(), ptr ? "FOUND" : "NULL");
+        if (!ptr) {  // Shouldn't happen after successful buildRT/freeze
+            if (c == 0 && candidates.size() > 1) {
+                // Try looking up by partial match to see what's actually registered
+                std::printf("[DBG] First mismatch — catalog uuid=%s length=%zu\n",
+                            candidate.uuid.c_str(), candidate.uuid.length());
+            }
+            continue;
         }
+
+        gpioOuts.push_back({ptr, candidate.name});
     }
 
     if (gpioOuts.empty()) {
@@ -136,11 +147,17 @@ int main()
         return 1;
     }
 
-    std::printf("[Demo] Running chaser pattern — each light ON for 3 seconds...\n");
+    std::printf("[Demo] Resolved %u GPIO output channel(s):\n", static_cast<unsigned>(gpioOuts.size()));
+    for (size_t i = 0; i < gpioOuts.size(); ++i) {
+        std::printf("  [%2zu] %s\n",
+                    i, gpioOuts[i].name.c_str());
+    }
+
+    std::printf("\n[Demo] Running chaser pattern — each light ON for 3 seconds...\n");
     std::printf("[Demo] Press Ctrl+C to stop early.\n\n");
 
     // ------------------------------------------------------------------
-    // Step 5: Chaser loop — walk through all GPIO outputs one at a time.
+    // Step 6: Chaser loop — walk through all GPIO outputs one at a time.
     //         Each output stays HIGH for ~3 seconds while others are LOW.
     // ------------------------------------------------------------------
     constexpr int kCycleTimeMs = 1;           // RT cycle period (1 ms)
@@ -174,8 +191,9 @@ int main()
                 auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
                     std::chrono::steady_clock::now() - startTime).count();
 
-                std::printf("[%lus] Lighting: GPIO%u\n",
-                            elapsed, gpioOuts[currentLight].lineNum);
+                std::printf("[%lus] [%zu] %s\n",
+                            elapsed, currentLight,
+                            gpioOuts[currentLight].name.c_str());
 
                 currentLight = (currentLight + 1) % gpioOuts.size();
             }
@@ -187,7 +205,7 @@ int main()
     }
 
     // ------------------------------------------------------------------
-    // Step 6: Graceful shutdown.
+    // Step 7: Graceful shutdown.
     // ------------------------------------------------------------------
     ctx->shutdown();
     std::printf("\n[Demo] Complete — context shut down cleanly.\n");
