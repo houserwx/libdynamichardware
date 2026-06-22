@@ -28,6 +28,20 @@ GPIODiscovery::GPIODiscovery()
 GPIODiscovery::GPIODiscovery(BoardVariant variant, std::string chipPath)
     : variant_(variant), chipPath_(std::move(chipPath)) {}
 
+// ---------------------------------------------------------------------------
+// Post-creation configuration hook (Phase 8 OCP compliance).
+// Orchestrator calls this AFTER factory lambda returns the scanner+adapter pair,
+// passing config from enabledBackends map. Must extract "chipPath" here
+// so scan() can open the correct gpiochip during discovery phase.
+// ---------------------------------------------------------------------------
+void GPIODiscovery::configure(const std::unordered_map<std::string, std::string>& config)
+{
+    auto chipIt = config.find("chipPath");
+    if (chipIt != config.end()) {
+        chipPath_ = chipIt->second;
+    }
+}
+
 GPIODiscovery::~GPIODiscovery() { reset(); }
 
 void GPIODiscovery::reset() noexcept

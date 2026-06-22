@@ -13,8 +13,31 @@
 
 namespace dynamichardware::i2c {
 
+// ---------------------------------------------------------------------------
+// Default constructor — used by self-registration (REGISTER_BACKEND macro).
+// Config injected later via configure() after factory instantiation.
+// ---------------------------------------------------------------------------
+I2CDiscovery::I2CDiscovery() = default;
+
+// ---------------------------------------------------------------------------
+// Parameterized constructor — legacy direct-instantiation path.
+// ---------------------------------------------------------------------------
 I2CDiscovery::I2CDiscovery(std::string busPath)
     : busPath_(std::move(busPath)) {}
+
+// ---------------------------------------------------------------------------
+// Post-creation configuration hook (Phase 8 OCP compliance).
+// Orchestrator calls this AFTER factory lambda returns the scanner+adapter pair,
+// passing config from enabledBackends map. Must extract "busPath" here
+// so scan() can validate the correct I2C bus device during discovery phase.
+// ---------------------------------------------------------------------------
+void I2CDiscovery::configure(const std::unordered_map<std::string, std::string>& config)
+{
+    auto it = config.find("busPath");
+    if (it != config.end()) {
+        busPath_ = it->second;
+    }
+}
 
 // ---------------------------------------------------------------------------
 // IBackenScanner::scan() — pure data scan: validate bus, return empty descriptors in stub mode.

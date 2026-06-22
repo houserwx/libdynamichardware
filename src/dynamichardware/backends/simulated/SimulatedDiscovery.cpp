@@ -19,10 +19,30 @@
 namespace dynamichardware::simulated {
 
 // ---------------------------------------------------------------------------
-// Constructor — store path to JSON definitions file.
+// Default constructor — used by self-registration (REGISTER_BACKEND macro).
+// Config injected later via configure() after factory instantiation.
+// ---------------------------------------------------------------------------
+SimulatedDiscovery::SimulatedDiscovery() = default;
+
+// ---------------------------------------------------------------------------
+// Parameterized constructor — legacy direct-instantiation path.
 // ---------------------------------------------------------------------------
 SimulatedDiscovery::SimulatedDiscovery(std::string definitionsPath)
     : definitionsPath_(std::move(definitionsPath)) {}
+
+// ---------------------------------------------------------------------------
+// Post-creation configuration hook (Phase 8 OCP compliance).
+// Orchestrator calls this AFTER factory lambda returns the scanner+adapter pair,
+// passing config from enabledBackends map. Must extract "definitionsPath" here
+// so scan() can open the correct JSON file during discovery phase.
+// ---------------------------------------------------------------------------
+void SimulatedDiscovery::configure(const std::unordered_map<std::string, std::string>& config)
+{
+    auto it = config.find("definitionsPath");
+    if (it != config.end()) {
+        definitionsPath_ = it->second;
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Helper: map channelType string → EntryType enum + isOutput flag

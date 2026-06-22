@@ -1,15 +1,14 @@
 // ============================================================================
 // gpio_correct_demo.cpp — Example consumer program for libdynamichardware.
 //
-// Demonstrates the CORRECT pattern for non-EtherCAT backends using the new builder API:
+// Demonstrates the correct pattern for GPIO backend using the builder API:
 //   1. Uses DynamicHardwareBuilder with clean three-phase architecture
-//   2. Discover hardware — populates catalog via BackendRegistry iteration (no hardcoded types)
+//   2. Discover hardware — populates catalog via BackendRegistry self-registration
 //   3. Consumer inspects catalog entries and selectively defines channels using mapChannel()
-//   4. Build RT context — orchestrator passes mapped channels TO backends as parameters (fixes F)
+//   4. Build RT context — orchestrator delegates to backends via IDHDOBuilder interface
 //   5. Freeze — locks entries for RT operation
 //   6. Cache live DHDOEntry pointers by resolving through catalog metadata
 //   7. Walk through each output (chaser / "running lights" pattern):
-//      turn on one light for 3 seconds, then move to the next
 // ============================================================================
 
 #include <cstdio>
@@ -47,7 +46,7 @@ int main()
     //         channels to map, with what direction/type (via mapChannel()).
     //
     // All backends now use a unified interface through the builder — no more
-    // "EtherCAT autobuild idiosyncrasy" at the consumer level (fixes Issue G).
+    // "EtherCAT autobuild idiosyncrasy" at the consumer level.
     // Internally each backend may still have different behavior encapsulated inside.
     //
     // CRITICAL: Use catalog entry metadata (entry.uuid) for mapChannel(),
@@ -57,7 +56,7 @@ int main()
     // NOTE: At discovery time GPIO entries are bidirectional (isOutput == false,
     //       channelType == "DigitalIO"). We filter on common fields only and let
     //       mapChannel() specify the desired direction. Backend details hidden.
-    
+
     struct GpioCandidate {
         std::string uuid;      ///< Stable UUID from catalog entry — used for lookup
         std::string name;      ///< Human-readable display name from catalog
@@ -65,14 +64,17 @@ int main()
 
     std::vector<GpioCandidate> candidates;
 
-    for (const auto& entry : catalog) {
+    const auto& catalog = builder.catalog();
+    for (const auto& entry : catalog.entries()) {
         if (entry.channelType != "DigitalIO") continue;
 
         // Map all discovered DigitalIO channels as outputs using the unified interface.
-        // The orchestrator passes these mapped channels TO backends as parameters (fixes F).
+        // The orchestrator passes mapped channels TO backends via build(channels)
+        // — no public setup methods on backends are needed (IDHDOBuilder interface).
         builder.mapChannel(entry.uuid, dhdo::EntryType::BoolOutput);
 
         candidates.push_back({entry.uuid, entry.name});
+        candidates.emplace_back(entry.uuid, entry.name);
         std::printf("[DBG] Catalog candidate uuid=%s name=%s\n",
                     entry.uuid.c_str(), entry.name.c_str());
     }
@@ -90,8 +92,8 @@ int main()
 
     // ------------------------------------------------------------------
     // Step 3: Build RT context from discovered data + consumer mappings.
-    //         Orchestrator filters channels per-backend and calls build(channels).
-    //         Backends look up their own catalog entries — no public setup methods (fixes A/H).
+    //         Orchestrator filters channels per-backend and calls build(channels)
+    //         via IDHDOBuilder — each backend validates its own UUIDs during construction.
     // ------------------------------------------------------------------
     auto ctx = builder.buildRT();
     if (!ctx) {
@@ -192,8 +194,8 @@ int main()
                 auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
                     std::chrono::steady_clock::now() - startTime).count();
 
-                std::printf("[%lus] [%zu] %s\n",
-                            elapsed, currentLight,
+                std::printf("[%lu s] GPIO%u — %s\n",
+                            static_cast<unsigned long>(elapsed), currentLight,
                             gpioOuts[currentLight].name.c_str());
 
                 currentLight = (currentLight + 1) % gpioOuts.size();

@@ -13,8 +13,31 @@
 
 namespace dynamichardware::spi {
 
+// ---------------------------------------------------------------------------
+// Default constructor — used by self-registration (REGISTER_BACKEND macro).
+// Config injected later via configure() after factory instantiation.
+// ---------------------------------------------------------------------------
+SPIDiscovery::SPIDiscovery() = default;
+
+// ---------------------------------------------------------------------------
+// Parameterized constructor — legacy direct-instantiation path.
+// ---------------------------------------------------------------------------
 SPIDiscovery::SPIDiscovery(std::string busPath)
     : busPath_(std::move(busPath)) {}
+
+// ---------------------------------------------------------------------------
+// Post-creation configuration hook (Phase 8 OCP compliance).
+// Orchestrator calls this AFTER factory lambda returns the scanner+adapter pair,
+// passing config from enabledBackends map. Must extract "busPath" here
+// so scan() can validate the correct SPI bus device during discovery phase.
+// ---------------------------------------------------------------------------
+void SPIDiscovery::configure(const std::unordered_map<std::string, std::string>& config)
+{
+    auto it = config.find("busPath");
+    if (it != config.end()) {
+        busPath_ = it->second;
+    }
+}
 
 // ---------------------------------------------------------------------------
 // IBackenScanner::scan() — pure data scan: validate bus, return empty descriptors in stub mode.

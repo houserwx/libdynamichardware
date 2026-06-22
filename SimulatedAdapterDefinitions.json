@@ -41,6 +41,36 @@
       "channelType": "FloatOutput",
       "name": "PID-Speed-Setpoint",
       "uuid": "sim-speed-sp"
+    },
+    {
+      "channelType": "BoolOutput",
+      "name": "LED-0",
+      "uuid": "sim-led-0"
+    },
+    {
+      "channelType": "BoolOutput",
+      "name": "LED-1",
+      "uuid": "sim-led-1"
+    },
+    {
+      "channelType": "BoolOutput",
+      "name": "LED-2",
+      "uuid": "sim-led-2"
+    },
+    {
+      "channelType": "BoolOutput",
+      "name": "LED-3",
+      "uuid": "sim-led-3"
+    },
+    {
+      "channelType": "BoolOutput",
+      "name": "LED-4",
+      "uuid": "sim-led-4"
+    },
+    {
+      "channelType": "BoolOutput",
+      "name": "LED-5",
+      "uuid": "sim-led-5"
     }
   ],
   "cycleTimeUs": 1000

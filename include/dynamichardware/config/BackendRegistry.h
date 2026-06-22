@@ -44,7 +44,8 @@ public:
             createAll();
 
 private:
-    static BackendCreators creators_;  ///< Internal storage — thread-safe after init
+    static BackendCreators creators_;  ///< Internal storage — initialized via Magic Static internally
+    
 };
 
 } // namespace dynamichardware::config

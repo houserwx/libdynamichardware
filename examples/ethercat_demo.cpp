@@ -2,11 +2,10 @@
 // ethercat_demo.cpp — Example consumer program for libdynamichardware.
 //
 // Demonstrates:
-//   1. Using DynamicHardwareBuilder with the EtherCAT backend (fixes C/D/E)
-//   2. Discovering and enumerating digital output channels via unified interface 
-//      (no more "autobuild idiosyncrasy" at consumer level — fixes G)
-//   3. Walking through each output (chaser / "running lights" pattern):
-//      turn on one light for 1 second, then move to the next
+//   1. Three-phase workflow: Discover → Build RT → Freeze → Run cycles
+//   2. Enumerating BoolOutput channels from catalog entries
+//   3. Walking chaser pattern across all digital outputs:
+//      turn on one light for ~3 seconds, then move to the next
 // ============================================================================
 
 #include <cstdio>
@@ -26,8 +25,9 @@ int main()
     std::printf("==========================================================\n\n");
 
     // ------------------------------------------------------------------
-    // Step 1: Discover hardware using the new builder API.
-    //         BackendRegistry iteration replaces hardcoded if-blocks in factory.
+    // Step 1: Register EtherCAT backend and discover channels via fluent API.
+    //         Builder.enableBackend() stores name + config;
+    //         orchestrator dispatches through BackendRegistry at runtime.
     // ------------------------------------------------------------------
     DynamicHardwareBuilder builder;
     builder.catalogPath("hardware.json")
@@ -40,7 +40,8 @@ int main()
 
     // ------------------------------------------------------------------
     // Step 2: Build RT context from discovered data.
-    //         Orchestrator passes channels TO backends — no public setup methods (fixes A/F/H).
+    //         Orchestrator passes channel lists TO each backend's build()
+    //         method; no public setup methods on backends are needed.
     // ------------------------------------------------------------------
     auto ctx = builder.buildRT();
     if (!ctx) {
@@ -62,11 +63,11 @@ int main()
                 ctx->allBackendsHealthy() ? "yes" : "no");
 
     // ------------------------------------------------------------------
-    // Step 3: Collect all digital output (BoolOutput) channels from the 
-    //         catalog and cache their DHDOEntry pointers.
+    // Step 4: Collect all BoolOutput channels from the catalog and cache
+    //         their DHDOEntry pointers for zero-overhead RT access.
     //
-    // Each catalog entry has a stable UUID derived from backend-specific fields.
-    // We use getDetails() to expose common info without touching raw backend data.
+    // Catalog entries have stable UUIDs derived from backend-specific fields.
+    // EtherCAT channelType is "DigitalOutput" for 1-bit outputs.
     // ------------------------------------------------------------------
     struct OutputInfo {
         dhdo::DHDOEntry* ptr{nullptr};

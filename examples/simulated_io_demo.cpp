@@ -3,10 +3,9 @@
 //
 // Demonstrates:
 //   1. Building simulated adapter definitions with SimulatedDefinitionBuilder
-//   2. Using DynamicHardwareBuilder (fluent API backed by BackendRegistry + orchestrator)
-//      using the new three-phase Builder+Orchestrator architecture
-//   3. Freezing PDOs for RT operation
-//   4. Running an RT read/process/write loop using cached entry pointers
+//   2. Three-phase workflow: Discover → Build RT → Freeze → Run cycles
+//   3. Cached DHDOEntry pointer lookups before entering the RT loop
+//   4. Walking lights chaser pattern across multiple BoolOutput channels
 // ============================================================================
 
 #include <algorithm>
@@ -14,6 +13,7 @@
 #include <cstdlib>
 #include <chrono>
 #include <thread>
+#include <vector>
 
 #include "dynamichardware/DynamicHardwareBuilder.h"
 #include "dynamichardware/SimulatedDefinitionBuilder.h"
@@ -51,17 +51,20 @@ int main()
 
         .int16Output("DAC-Voltage",       "sim-dac-voltage")
 
-        .floatOutput("PID-Speed-Setpoint","sim-speed-sp");
+	.floatOutput("PID-Speed-Setpoint", "sim-speed-sp")
 
-    if (!defs.save("SimulatedAdapterDefinitions.json")) {
-        std::fprintf(stderr, "[Demo] Failed to write simulated definitions\n");
-        return 1;
-    }
+	// --- Walking Lights LEDs (mimic GPIO/EtherCAT chaser demos) --------
+	.boolOutput("LED-0",              "sim-led-0")
+	.boolOutput("LED-1",              "sim-led-1")
+	.boolOutput("LED-2",              "sim-led-2")
+	.boolOutput("LED-3",              "sim-led-3")
+	.boolOutput("LED-4",              "sim-led-4")
+	.boolOutput("LED-5",              "sim-led-5");
 
     // ------------------------------------------------------------------
-    // Step 2: Discover hardware using the new builder API.
-    //         The builder delegates to HardwareOrchestrator which iterates over
-    //         BackendRegistry instead of hardcoding backend types (fixes C/D/E).
+    // Step 2: Register backends and discover channels via fluent API.
+    //         Builder.enableBackend() stores name + config map;
+    //         orchestrator dispatches through BackendRegistry at runtime.
     // ------------------------------------------------------------------
     DynamicHardwareBuilder builder;
     builder.catalogPath("hardware.json")
@@ -74,8 +77,8 @@ int main()
 
     // ------------------------------------------------------------------
     // Step 3: Build RT context from discovered data.
-    //         Orchestrator filters mapped channels per-backend and calls build() — no
-    //         public setup methods exposed to consumers (fixes A/F/H).
+    //         Orchestrator passes channel lists TO each backend's build()
+    //         method; no public setup methods on backends are needed.
     // ------------------------------------------------------------------
     auto ctx = builder.buildRT();
     if (!ctx) {
@@ -100,7 +103,7 @@ int main()
     ctx->printState();
 
     // ------------------------------------------------------------------
-    // Step 4: Cache entry pointers (init-time lookups before RT loop).
+    // Step 5: Cache entry pointers (init-time lookups before RT loop).
     //         In a real application you'd store these in your controller class.
     // ------------------------------------------------------------------
     dhdo::DHDOEntry* limitSwitch   = ctx->lookupByName("LimitSwitch-A");
@@ -111,19 +114,31 @@ int main()
     dhdo::DHDOEntry* dacVoltage    = ctx->lookupByName("DAC-Voltage");
     dhdo::DHDOEntry* speedSetpoint = ctx->lookupByName("PID-Speed-Setpoint");
 
-    if (!limitSwitch || !encoderPos || !tempSensor ||
-        !relayPump   || !dacVoltage || !speedSetpoint) {
-        std::fprintf(stderr, "[Demo] One or more channels not found — check names\n");
-        return 1;
-    }
+	// Walking lights LED entry pointers — cache before entering RT loop
+	std::vector<dhdo::DHDOEntry*> leds;
+	leds.reserve(6);
+	for (int n = 0; n < 6; ++n) {
+	    std::string ledName = "LED-" + std::to_string(n);
+	    auto* p = ctx->lookupByName(ledName);
+	    if (!p) {
+	        std::fprintf(stderr, "[Demo] LED channel '%s' not found\n", ledName.c_str());
+	        return 1;
+	    }
+	    leds.push_back(p);
+	}
 
-    std::printf("[Demo] All channel lookups succeeded.\n");
+    std::printf("[Demo] All channel lookups succeeded (including %zu LEDs).\n",
+	            leds.size());
     std::printf("[Demo] Running %d RT cycles at simulated 1 kHz...\n\n", kCycleCount);
 
-    // Print header
-    std::printf("%-6s | %-8s | %-12s | %-14s | %-6s | %-9s | %-13s\n",
-                "Cycle", "LimitSW", "Encoder.Pos", "Temp (°C)", "Relay", "DAC (mV)", "Speed SP");
-    std::printf("---------------------------------------------------------------------------\n");
+	// Walking lights timing parameters
+	constexpr int kCyclesPerLight = 50;  // Each LED stays ON for 50 cycles (~50ms @ 1kHz)
+	unsigned currentLed = 0;
+
+	// Print header
+	std::printf("%-6s | %-8s | %-12s | %-14s | %-6s | %-9s | %-13s | %-6s\n",
+	            "Cycle", "LimitSW", "Encoder.Pos", "Temp (°C)", "Relay", "DAC (mV)", "Speed SP", "LED");
+	std::printf("------------------------------------------------------------------------------------\n");
 
     // ------------------------------------------------------------------
     // Step 5: RT read / process / write loop.
@@ -148,6 +163,18 @@ int main()
         // Speed setpoint: ramp up gradually, then hold at 1500 rpm.
         float speedSP = static_cast<float>(std::min(i, 30)) * 50.0f;
 
+        // -- UPDATE WALKING LIGHTS -------------------------------------------
+        // Set all LEDs OFF, then turn ON the current one in the chaser sequence.
+        for (auto* led : leds) {
+            led->setBool(false);
+        }
+        leds[currentLed]->setBool(true);
+
+        // Advance to next LED after the dwell period elapses
+        if ((i + 1) % kCyclesPerLight == 0) {
+            currentLed = (currentLed + 1) % leds.size();
+        }
+
         // -- WRITE phase -------------------------------------------------
         relayPump->setBool(pumpOn);
         dacVoltage->setInt16(dacValue);
@@ -157,14 +184,15 @@ int main()
 
         // Print row every 5 cycles to keep output readable.
         if (i % 5 == 0 || i == kCycleCount - 1) {
-            std::printf("%-6d | %-8s | %-12d | %-14.2f | %-6s | %-9d | %-13.0f\n",
+            std::printf("%-6d | %-8s | %-12d | %-14.2f | %-6s | %-9d | %-13.0f | LED-%u\n",
                         i,
                         limitSw ? "CLOSED" : "open ",
                         encPos,
                         temperature,
                         pumpOn ? "ON " : "off",
                         dacValue,
-                        speedSP);
+                        speedSP,
+                        currentLed);
         }
 
         // Simulate RT cycle timing (remove in production — use hardware timer).

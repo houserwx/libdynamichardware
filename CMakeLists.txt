@@ -160,9 +160,15 @@ set_target_properties(dh-discover PROPERTIES
 )
 
 # ── Examples ─────────────────────────────────────────────────────────────────
+# NOTE: All executables that depend on BackendRegistry self-registration must
+# link dynamichardware with --whole-archive so static initializers from every
+# backend .cpp survive into the final binary (anonymous namespace Registrar types
+# have no external references and would otherwise be discarded by the linker).
 
 add_executable(simulated_io_demo examples/simulated_io_demo.cpp)
-target_link_libraries(simulated_io_demo PRIVATE dynamichardware)
+target_link_libraries(simulated_io_demo PRIVATE
+    -Wl,--whole-archive dynamichardware -Wl,--no-whole-archive
+)
 target_include_directories(simulated_io_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 if(ETHERCAT_AVAILABLE)
     target_compile_definitions(simulated_io_demo PRIVATE ETHERCAT_AVAILABLE)
@@ -175,8 +181,13 @@ if(LIBGPIOD_FOUND)
     endif()
 endif()
 
+# Backend self-registration relies on anonymous namespace static constructors
+# (REGISTER_BACKEND macro). Without --whole-archive, the linker dead-strips those
+# object files from the .a archive because their symbols have LOCAL visibility only.
 add_executable(ethercat_demo examples/ethercat_demo.cpp)
-target_link_libraries(ethercat_demo PRIVATE dynamichardware)
+target_link_libraries(ethercat_demo PRIVATE
+    -Wl,--whole-archive dynamichardware -Wl,--no-whole-archive
+)
 target_include_directories(ethercat_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 if(ETHERCAT_AVAILABLE)
     target_compile_definitions(ethercat_demo PRIVATE ETHERCAT_AVAILABLE)
