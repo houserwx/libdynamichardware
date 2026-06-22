@@ -9,10 +9,19 @@
 
 #include <cstdio>
 #include <memory>
+#include <string>
 #include <thread>
 #include <vector>
 
 namespace dynamichardware::ethercat {
+
+void EthercatDiscovery::configure(const std::unordered_map<std::string, std::string>& config)
+{
+    auto it = config.find("cycleNs");
+    if (it != config.end()) {
+        cycleNs_ = static_cast<uint32_t>(std::stoul(it->second));
+    }
+}
 
 // ---------------------------------------------------------------------------
 // IBackenScanner::scan() — pure data scan: acquire master -> walk slaves/PDOs -> return descriptors.
