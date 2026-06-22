@@ -10,6 +10,10 @@
 // ============================================================================
 
 #include "dynamichardware/dhdo/IDHDOBuilder.h"
+
+// Forward declaration for catalog pointer — avoids circular include.
+namespace dynamichardware::dhdo { class HardwareCatalog; }
+
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -28,6 +32,11 @@ public:
     /// Post-creation configuration from orchestrator's enabledBackends config map.
     /// Called after adapter construction but before build(). Backends ignore unknown keys.
     virtual void configure(const std::unordered_map<std::string, std::string>& /*config*/) {}
+
+    /// Inject a const reference to the hardware catalog so backends can resolve UUIDs
+    /// during build(channels).  Default implementation is no-op for backends that don't
+    /// need catalog lookups (e.g., Simulated uses its own definition source).
+    virtual void setCatalog(const HardwareCatalog* /*catalog*/) noexcept {}
 
     /// Optional one-time initialization after adapter is created but before RT loop.
     virtual void initialize() noexcept {}

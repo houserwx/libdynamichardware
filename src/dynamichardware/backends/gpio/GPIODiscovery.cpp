@@ -105,12 +105,17 @@ std::vector<dhdo::HardwareDescriptor> GPIODiscovery::scan()
 
     std::printf("[GPIO] Scanning %u GPIO lines on %s\n", total_lines, chipPath_.c_str());
 
-    // Known-safe user-accessible pins on BCM2711 header.
+    // Whitelisted BCM2711 pins — user-accessible header pins only.
+    // - BCM 17, 27, 22 (Physical Pins 11, 13, 15)
+    // - BCM 23, 24, 25, 8, 7 (Physical Pins 16, 18, 22, 24, 26)
+    // - BCM 5, 6, 12, 13, 16, 19, 20, 21, 26 (Bottom-of-board cluster)
     static const uint32_t pi4SafePins[] = {
-        0, 1, 2, 3, 4, 5,       // General purpose bank
-        12, 13,                  // SPI CE lines
-        16, 17, 18, 19, 20, 21, // Extended GPIO bank
-        22, 23                   // SPI MOSI/MISO
+        5,   6,   7,   8,
+        12,  13,
+        16,  17,
+        19,  20,  21,
+        22,  23,  24,  25,
+        26,  27
     };
     constexpr size_t pi4SafePinCount = sizeof(pi4SafePins) / sizeof(pi4SafePins[0]);
 

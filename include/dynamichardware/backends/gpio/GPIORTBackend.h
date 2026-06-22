@@ -76,7 +76,7 @@ public:
     // --- Builder interface -------------------------------------------------
     /// Set catalog reference so backend can resolve UUIDs internally.
     /// Called by orchestrator/factory BEFORE build(channels).
-    void setCatalog(const dynamichardware::dhdo::HardwareCatalog* catalog) noexcept;
+    void setCatalog(const dynamichardware::dhdo::HardwareCatalog* catalog) noexcept override;
 
     /// Build RT state from mapped channel list. Looks up each UUID in the catalog
     /// and constructs internal GPIOLine entries without exposing GpioBackendData.

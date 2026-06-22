@@ -245,7 +245,8 @@ bool GPIORTBackend::build(const std::vector<dynamichardware::dhdo::MappedChannel
         }
     }
 
-    syncImagePointers();
+    // No need for syncImagePointers() — onBeforeReadInputs/onAfterWriteOutputs 
+    // read directly from dhdos_[0].entries[i] which freeze() correctly sets up.
     activated_ = true;
     std::printf("[GPIO] Built RT: %zu lines via build(channels)\n", lines_.size());
     return true;
@@ -253,35 +254,42 @@ bool GPIORTBackend::build(const std::vector<dynamichardware::dhdo::MappedChannel
 
 // ---------------------------------------------------------------------------
 // RT cycle: read input lines into PDO image buffers.
+// Write directly into dhdos_ entries — the single shared memory block that 
+// freeze() locked in place.  The user's cached pointers point here.
 // ---------------------------------------------------------------------------
 void GPIORTBackend::onBeforeReadInputs() noexcept
 {
+    // Fast path: no PDO built yet → nothing to fill
+    if (dhdos_.empty()) return;
+
+    const auto& pdo = dhdos_[0];
+
     if (stubMode_) {
         static uint64_t cycleCount = 0;
         ++cycleCount;
 
-        for (size_t i = 0; i < lines_.size(); ++i) {
+        for (size_t i = 0; i < lines_.size() && i < pdo.entries.size(); ++i) {
             if (lines_[i].direction != LineDirection::INPUT) continue;
 
             bool val = (cycleCount % 40) < 20;
             stubStates_[i].value = val;
 
-            if (lines_[i].entry.image) {
-                *(uint8_t*)lines_[i].entry.image = val ? 1 : 0;
+            if (pdo.entries[i].image) {
+                *(uint8_t*)pdo.entries[i].image = val ? 1 : 0;
             }
         }
         return;
     }
 
 #if HAS_LIBGPIOD
-    for (size_t i = 0; i < lines_.size(); ++i) {
+    for (size_t i = 0; i < lines_.size() && i < pdo.entries.size(); ++i) {
         if (lines_[i].direction != LineDirection::INPUT) continue;
         if (!handles_[i].gpiod_line) continue;
 
         int val = gpiod_line_get_value(static_cast<struct gpiod_line*>(handles_[i].gpiod_line));
 
-        if (lines_[i].entry.image) {
-            *(uint8_t*)lines_[i].entry.image = static_cast<uint8_t>(val != 0);
+        if (pdo.entries[i].image) {
+            *(uint8_t*)pdo.entries[i].image = static_cast<uint8_t>(val != 0);
         }
     }
 #endif
@@ -289,28 +297,37 @@ void GPIORTBackend::onBeforeReadInputs() noexcept
 
 // ---------------------------------------------------------------------------
 // RT cycle: write output lines from PDO image buffers.
+// Read directly from dhdos_ entries — the single shared memory block that
+// freeze() locked in place.  No stale copies involved.
 // ---------------------------------------------------------------------------
 void GPIORTBackend::onAfterWriteOutputs() noexcept
 {
+    // Fast path: no PDO built yet → nothing to flush
+    if (dhdos_.empty()) return;
+
+    const auto& pdo = dhdos_[0];
+
     if (stubMode_) {
-        for (size_t i = 0; i < lines_.size(); ++i) {
+        for (size_t i = 0; i < lines_.size() && i < pdo.entries.size(); ++i) {
             if (lines_[i].direction != LineDirection::OUTPUT) continue;
 
-            if (lines_[i].entry.image) {
-                stubStates_[i].value = (*(uint8_t*)lines_[i].entry.image) != 0;
+            uint8_t val = 0;
+            if (pdo.entries[i].image) {
+                val = *(uint8_t*)pdo.entries[i].image;
             }
+            stubStates_[i].value = val != 0;
         }
         return;
     }
 
 #if HAS_LIBGPIOD
-    for (size_t i = 0; i < lines_.size(); ++i) {
+    for (size_t i = 0; i < lines_.size() && i < pdo.entries.size(); ++i) {
         if (lines_[i].direction != LineDirection::OUTPUT) continue;
         if (!handles_[i].gpiod_line) continue;
 
         int val = 0;
-        if (lines_[i].entry.image) {
-            val = (*(uint8_t*)lines_[i].entry.image) != 0;
+        if (pdo.entries[i].image) {
+            val = (*(uint8_t*)pdo.entries[i].image) != 0;
         }
 
         gpiod_line_set_value(static_cast<struct gpiod_line*>(handles_[i].gpiod_line), val);

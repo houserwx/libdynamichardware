@@ -31,6 +31,7 @@ int main()
     // ------------------------------------------------------------------
     DynamicHardwareBuilder builder;
     builder.catalogPath("hardware.json")
+           .mappingPath("ethercat_mappings.json")
            .enableBackend("EtherCAT", {{"cycleNs", "1000000"}});              // 1 ms cycle time (DC sync)
 
     if (!builder.discover()) {

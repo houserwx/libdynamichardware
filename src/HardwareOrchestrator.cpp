@@ -143,28 +143,32 @@ bool HardwareOrchestrator::runDiscoveryScan() {
         // orchestrator converts descriptors to CatalogEntry objects inline.
         std::printf("[Discover] Scanning %s devices...\n", name.c_str());
         auto descriptors = scanner->scan();
-        for (auto& desc : descriptors) {
-            dhdo::CatalogEntry entry{};
-            entry.uuid          = desc.uuid;
-            entry.channelType   = desc.channelType;
-            entry.name          = desc.name;
-            entry.slaveName     = "Unknown";  // Will be overridden by backend-specific metadata
-            entry.isOutput      = desc.isOutput;
-            entry.backend       = desc.backend;
-            entry.backendData   = std::move(desc.backendData);
-            catalog_.addEntry(std::move(entry));
-        }
 
-        bool found = !descriptors.empty();
+        // Mark this backend as participating in the current discovery cycle.
+        // Only participating backends can purge their own territory — others are preserved.
+        if (!descriptors.empty()) {
+            dhdo::BackendType participatedType = descriptors[0].backend;
+            catalog_.markBackendParticipated(participatedType);
 
-        // Store adapter between discovery and build phases
-        pendingAdapters_[name] = std::move(adapter);
+            for (auto& desc : descriptors) {
+                dhdo::CatalogEntry entry{};
+                entry.uuid          = desc.uuid;
+                entry.channelType   = desc.channelType;
+                entry.name          = desc.name;
+                entry.slaveName     = "Unknown";  // Will be overridden by backend-specific metadata
+                entry.isOutput      = desc.isOutput;
+                entry.backend       = desc.backend;
+                entry.backendData   = std::move(desc.backendData);
+                catalog_.addEntry(std::move(entry));
+            }
 
-        if (found) {
             anyDiscovered = true;
         } else {
             std::printf("[Discover] %s discovery returned no entries (stub mode or unavailable)\n", name.c_str());
         }
+
+        // Store adapter between discovery and build phases
+        pendingAdapters_[name] = std::move(adapter);
     }
 
     return anyDiscovered;
@@ -191,7 +195,12 @@ bool HardwareOrchestrator::discover() {
 
     bool anyDiscovered = runDiscoveryScan();
 
-    // Purge entries that were NOT re-registered during this discovery cycle.
+    // Report backends that had existing catalog entries but didn't participate this cycle.
+    // These territories are preserved (not purged) — just flagged as offline so mapping/build can skip them.
+    catalog_.reportOfflineBackends(state_.enabledBackends);
+
+    // Purge ONLY stale entries from participating backends (devices removed/changed).
+    // Non-participating backend territory is left untouched.
     auto purged = catalog_.purgeStaleEntries();
     if (purged > 0) {
         std::printf("[Discover] Removed %zu stale entries from catalog\n", purged);
@@ -277,14 +286,35 @@ std::unique_ptr<DynamicHardwareContextObject> HardwareOrchestrator::buildRT() {
 
     for (auto& [name, adapter] : pendingAdapters_) {
         // Adapter was already configured during discovery via configure(configMap).
-        // Now build its internal DHDO state.
+        // Now inject catalog reference and pass all channel defs as opaque UUID tuples.
+        // Each adapter self-selects the entries it owns during build() — orchestrator stays abstract.
         std::printf("[RtBuild] Building %s backend...\n", name.c_str());
+
+        // Give adapter access to the catalog so it can resolve its own UUIDs internally.
+        // This is init-time only; after build() returns we're in runtime territory.
+        adapter->setCatalog(&catalog_);
+
+        // Convert consumer channel definitions into MappedChannel structs.
+        // Pass ALL defs — each adapter filters by its own BackendType inside build().
+        std::vector<dhdo::MappedChannel> allChannels;
+        for (const auto& cdef : channelDefs_) {
+            const auto* catEntry = catalog_.findByUuid(cdef.keyOrUuid);
+            if (!catEntry) continue;  // Stale mapping — skip silently
+
+            dhdo::MappedChannel mc{};
+            mc.uuid   = cdef.keyOrUuid;
+            mc.type   = cdef.type;
+            mc.name   = cdef.friendlyName.empty()
+                           ? catEntry->name  // Fall back to catalog displayName
+                           : cdef.friendlyName;
+            allChannels.push_back(std::move(mc));
+        }
 
         bool ok = false;
         try {
-            // Each backend's RT adapter implements either buildRT() or build(channels).
-            // The virtual build() method is the canonical interface; fall through to it.
-            if (adapter->build({})) {
+            // Each backend's RT adapter implements build(channels).
+            // The adapter self-selects entries matching its transport type from the list.
+            if (adapter->build(allChannels)) {
                 ok = true;
             } else {
                 std::printf("[RtBuild] %s RT setup failed — skipping\n", name.c_str());

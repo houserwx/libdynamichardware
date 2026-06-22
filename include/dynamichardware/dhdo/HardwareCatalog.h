@@ -325,6 +325,7 @@ struct CatalogEntry {
             {"name", e.name},
             {"slaveName", e.slaveName},
             {"isOutput", e.isOutput},
+            {"isActive", e.isActive},
             {"isSimulated", e.isSimulated},
             {"sim", e.sim},
             {"backend", e.backend},
@@ -341,6 +342,8 @@ struct CatalogEntry {
         if (j.contains("name") && !j["name"].is_null())           j.at("name").get_to(e.name);
         if (j.contains("slaveName") && !j["slaveName"].is_null()) j.at("slaveName").get_to(e.slaveName);
         if (j.contains("isOutput"))                                j.at("isOutput").get_to(e.isOutput);
+        if (j.contains("isActive"))                                j.at("isActive").get_to(e.isActive);
+        else                                                       e.isActive = true;  // Backward compat: old entries default active
         if (j.contains("isSimulated"))                             j.at("isSimulated").get_to(e.isSimulated);
         if (j.contains("sim"))                                     j.at("sim").get_to(e.sim);
         if (j.contains("backend"))                                 j.at("backend").get_to(e.backend);
@@ -384,16 +387,32 @@ public:
     bool save(const std::string& path) const;
 
     // ---- Discovery lifecycle ----
-    // Call beginDiscovery() before running any adapters, then purgeStaleEntries()
-    // after all adapters complete.  Entries added via addEntry/registerEcChannel
-    // are auto-marked as "alive" so they survive; anything not re-seen gets removed.
+    // Per-backend scoping: each backend can only invalidate its own territory.
+    // The orchestrator owns the catalog and tracks which backends participated
+    // in each discovery cycle; backends that didn't scan get their entries marked offline.
 
     /// Begin a fresh discovery cycle — marks current catalog as potentially stale.
     void beginDiscovery();
 
-    /// End discovery — remove entries that were NOT registered during this cycle.
+    /// Declare that a specific backend participated in this discovery cycle.
+    /// Entries belonging to non-participating backends are NOT purged at cycle end;
+    /// instead they're marked offline so the orchestrator can report them.
+    void markBackendParticipated(BackendType type);
+
+    /// End discovery — remove ONLY entries whose backend participated but wasn't re-scanned.
+    /// Non-participating backends' entries stay put (marked offline).
     /// Returns the number of purged entries.
     size_t purgeStaleEntries();
+
+    /// Report backends that had existing catalog entries but didn't scan this cycle.
+    /// Takes the set of enabled backend names so we can check which ones weren't reached.
+    void reportOfflineBackends(const std::unordered_map<std::string, std::unordered_map<std::string, std::string>>& enabledBackends);
+
+    /// Check if any entries exist for a given backend type, regardless of online status.
+    [[nodiscard]] bool hasEntriesFor(BackendType type) const noexcept;
+
+    /// Count entries for a given backend type.
+    [[nodiscard]] size_t countEntriesFor(BackendType type) const noexcept;
 
     /// End discovery AND lock the catalog against further writes.
     /// After calling this, addEntry/registerEcChannel will silently reject new entries.
@@ -437,9 +456,10 @@ private:
     std::vector<CatalogEntry>               entries_;
     std::unordered_map<std::string, size_t> uuidIndex_;  ///< uuid → index (sole lookup)
 
-   // Discovery lifecycle: tracks which UUIDs were registered during current cycle.
+   // Discovery lifecycle: per-backend scoping prevents cross-territory destruction.
     bool                            discoveryMode_{false};
-    std::unordered_set<std::string> aliveUuids_;  ///< UUIDs marked alive since beginDiscovery()
+    std::unordered_set<BackendType> participatedBackends_;  ///< Backends that scanned this cycle
+    std::unordered_set<std::string> aliveUuids_;  ///< UUIDs marked alive by participating backends
 
     /// Write lockdown — after endDiscovery() is called, the catalog becomes read-only.
     /// Prevents post-discovery mutation (Issue B fix).

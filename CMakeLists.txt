@@ -141,7 +141,9 @@ endif()
 # ── dh-discover CLI tool ─────────────────────────────────────────────────────
 
 add_executable(dh-discover src/tools/discover.cpp)
-target_link_libraries(dh-discover PRIVATE dynamichardware)
+target_link_libraries(dh-discover PRIVATE
+    -Wl,--whole-archive dynamichardware -Wl,--no-whole-archive
+)
 target_include_directories(dh-discover PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # Propagate compile definitions + include dirs from the library to the tool
 # (needed because dh-discover includes backend headers that #include ecrt.h/gpiod.h)
@@ -213,9 +215,13 @@ if(LIBGPIOD_FOUND)
 endif()
 
 # GPIO demo (correct pattern — follows EtherCAT style)
+# NOTE: --whole-archive required so all backend REGISTER_BACKEND static constructors
+# survive from the .a archive (anonymous namespace Registrar types have no external refs).
 if(LIBGPIOD_FOUND)
     add_executable(gpio_correct_demo examples/gpio_correct_demo.cpp)
-    target_link_libraries(gpio_correct_demo PRIVATE dynamichardware)
+    target_link_libraries(gpio_correct_demo PRIVATE
+        -Wl,--whole-archive dynamichardware -Wl,--no-whole-archive
+    )
     target_include_directories(gpio_correct_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
     target_compile_definitions(gpio_correct_demo PRIVATE GPIO_LIBGPIOD_AVAILABLE)
     if(LIBGPIOD_INCLUDE_DIR)
@@ -223,7 +229,31 @@ if(LIBGPIOD_FOUND)
     endif()
 endif()
 
-install(TARGETS dh-discover ethercat_demo simulated_io_demo
+# ── Stats demos (modular — shared infrastructure in examples/stats_demos/) ────
+
+add_executable(ethercat_demo_stats examples/stats_demos/ethercat_demo.cpp)
+target_link_libraries(ethercat_demo_stats PRIVATE
+    -Wl,--whole-archive dynamichardware -Wl,--no-whole-archive
+)
+target_include_directories(ethercat_demo_stats PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+if(ETHERCAT_AVAILABLE)
+    target_compile_definitions(ethercat_demo_stats PRIVATE ETHERCAT_AVAILABLE)
+    target_include_directories(ethercat_demo_stats PRIVATE ${ETHERCAT_INCLUDE_DIR})
+endif()
+
+if(LIBGPIOD_FOUND)
+    add_executable(gpio_demo_stats examples/stats_demos/gpio_demo.cpp)
+    target_link_libraries(gpio_demo_stats PRIVATE
+        -Wl,--whole-archive dynamichardware -Wl,--no-whole-archive
+    )
+    target_include_directories(gpio_demo_stats PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_definitions(gpio_demo_stats PRIVATE GPIO_LIBGPIOD_AVAILABLE)
+    if(LIBGPIOD_INCLUDE_DIR)
+        target_include_directories(gpio_demo_stats PRIVATE ${LIBGPIOD_INCLUDE_DIR})
+    endif()
+endif()
+
+install(TARGETS dh-discover ethercat_demo simulated_io_demo ethercat_demo_stats gpio_demo_stats
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 

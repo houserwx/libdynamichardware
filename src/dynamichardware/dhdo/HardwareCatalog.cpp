@@ -300,18 +300,25 @@ bool HardwareCatalog::save(const std::string& path) const
 }
 
 // ---------------------------------------------------------------------------
-// Discovery lifecycle
+// Discovery lifecycle — per-backend scoping prevents cross-territory destruction.
+// Each backend can only invalidate its own territory. The orchestrator owns the
+// catalog and tracks which backends participated in each cycle.
 // ---------------------------------------------------------------------------
 void HardwareCatalog::beginDiscovery()
 {
     // Clear write lock at start of discovery — catalog becomes writable again.
     writeLocked_ = false;
 
-    // Snapshot: all currently-loaded UUIDs are potentially stale.
-    // During this cycle, anything registered via addEntry or registerEcChannel
-    // will be marked "alive"; anything not re-seen gets purged by purgeStaleEntries().
+    // Reset participation tracking for this cycle. Backends that don't scan will have their
+    // existing entries preserved but marked offline by the orchestrator after this cycle ends.
+    participatedBackends_.clear();
     aliveUuids_.clear();
     discoveryMode_ = true;
+}
+
+void HardwareCatalog::markBackendParticipated(BackendType type)
+{
+    participatedBackends_.insert(type);
 }
 
 size_t HardwareCatalog::purgeStaleEntries()
@@ -324,12 +331,18 @@ size_t HardwareCatalog::purgeStaleEntries()
     size_t purged = 0;
     auto writeIt = entries_.begin();
     for (auto readIt = entries_.begin(); readIt != entries_.end(); ++readIt) {
-        if (aliveUuids_.count(readIt->uuid)) {
-            // This UUID was re-registered this cycle — keep it.
+        bool participated = participatedBackends_.count(readIt->backend);
+
+        if (participated && aliveUuids_.count(readIt->uuid)) {
+            // Backend scanned AND re-registered this UUID — keep it online.
             *writeIt++ = *readIt;
-        } else {
-            // Stale entry (device removed, direction changed, etc.) — remove.
+        } else if (participated && !aliveUuids_.count(readIt->uuid)) {
+            // Backend scanned but didn't re-register this UUID — device removed or changed.
             ++purged;
+        } else {
+            // Backend did NOT participate this cycle — preserve entry as-is.
+            // The orchestrator will mark offline status separately if needed.
+            *writeIt++ = *readIt;
         }
     }
     entries_.erase(writeIt, entries_.end());
@@ -343,6 +356,25 @@ size_t HardwareCatalog::purgeStaleEntries()
         std::printf("[Catalog] No stale entries to purge\n");
     }
     return purged;
+}
+
+void HardwareCatalog::markOfflineForBackend(BackendType type)
+{
+    // Report which backends didn't scan this cycle — orchestrator uses this to skip entire territories.
+    // No per-entry flags needed; gating is handled at the boundary via participatedBackends_ set.
+    size_t count = hasEntriesFor(type) ? countEntriesFor(type) : 0;
+    if (count > 0) {
+        auto typeName = backendTypeName(type);
+        std::printf("[Catalog] Backend '%s' not scanned: %zu entries preserved (offline)\n", typeName.c_str(), count);
+    }
+}
+
+bool HardwareCatalog::hasEntriesFor(BackendType type) const noexcept
+{
+    for (const auto& entry : entries_) {
+        if (entry.backend == type) return true;
+    }
+    return false;
 }
 
 void HardwareCatalog::endDiscovery()
@@ -359,6 +391,19 @@ void HardwareCatalog::markAlive(const std::string& uuid)
 {
     if (discoveryMode_) {
         aliveUuids_.insert(uuid);
+    }
+}
+
+/// Helper to convert BackendType enum to human-readable name string.
+static std::string backendTypeName(BackendType type) noexcept
+{
+    switch (type) {
+        case BackendType::ETHERCAT:   return "EtherCAT";
+        case BackendType::GPIO:       return "GPIO";
+        case BackendType::I2C:        return "I2C";
+        case BackendType::SPI:        return "SPI";
+        case BackendType::SIMULATED:  return "Simulated";
+        default:                      return "Unknown";
     }
 }
 

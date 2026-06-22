@@ -33,8 +33,8 @@ public:
     void onBeforeReadInputs()  noexcept override;
     void onAfterWriteOutputs() noexcept override;
 
-    // --- Builder interface -------------------------------------------------
-    void setCatalog(const dynamichardware::dhdo::HardwareCatalog* catalog) noexcept;
+ // --- Builder interface -------------------------------------------------
+    void setCatalog(const dynamichardware::dhdo::HardwareCatalog* catalog) noexcept override;
     [[nodiscard]] bool build(const std::vector<dynamichardware::dhdo::MappedChannel>& channels) override;
 
  private:

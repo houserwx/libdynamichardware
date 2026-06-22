@@ -34,7 +34,9 @@ int main()
     //         Catalog entries are bidirectional ("DigitalIO") at this stage.
     // ------------------------------------------------------------------
     DynamicHardwareBuilder builder;
-    builder.catalogPath("hardware.json").enableBackend("GPIO");
+    builder.catalogPath("hardware.json")
+           .mappingPath("gpio_mappings.json")
+           .enableBackend("GPIO");
 
     if (!builder.discover()) {
         std::fprintf(stderr, "[Demo] Discovery failed\n");
@@ -64,19 +66,25 @@ int main()
 
     std::vector<GpioCandidate> candidates;
 
+    // Only use these specific GPIO lines — match by catalog entry name.
+    // Consumer stays abstract: no knowledge of backend internals.
+    constexpr const char* kDemoNames[] = { "BCM2711 GPIO 27", "BCM2711 GPIO 21",
+                                           "BCM2711 GPIO 13", "BCM2711 GPIO 26" };
+
     const auto& catalog = builder.catalog();
     for (const auto& entry : catalog.entries()) {
         if (entry.channelType != "DigitalIO") continue;
 
-        // Map all discovered DigitalIO channels as outputs using the unified interface.
-        // The orchestrator passes mapped channels TO backends via build(channels)
-        // — no public setup methods on backends are needed (IDHDOBuilder interface).
+        bool wanted = false;
+        for (auto wn : kDemoNames) {
+            if (entry.name == wn) { wanted = true; break; }
+        }
+        if (!wanted) continue;
+
+        // Map this channel as an output using the unified interface.
         builder.mapChannel(entry.uuid, dhdo::EntryType::BoolOutput);
 
         candidates.push_back({entry.uuid, entry.name});
-        candidates.emplace_back(entry.uuid, entry.name);
-        std::printf("[DBG] Catalog candidate uuid=%s name=%s\n",
-                    entry.uuid.c_str(), entry.name.c_str());
     }
 
     if (candidates.empty()) {

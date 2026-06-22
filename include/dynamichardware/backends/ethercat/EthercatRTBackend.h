@@ -125,8 +125,8 @@ public:
     /// Sync clocks, queue domain, and send EtherCAT frames from the buffer.
     void onAfterWriteOutputs() noexcept override;
 
-    // --- Builder interface -------------------------------------------------
-    void setCatalog(const dynamichardware::dhdo::HardwareCatalog* catalog) noexcept;
+ // --- Builder interface -------------------------------------------------
+    void setCatalog(const dynamichardware::dhdo::HardwareCatalog* catalog) noexcept override;
 
     /// Build RT state: if channels list is empty -> auto-discover all PDOs as fallback.
     /// If non-empty -> filter to only those UUIDs. Fixes Issue G (LSP consistency).

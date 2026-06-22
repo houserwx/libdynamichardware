@@ -130,6 +130,11 @@ std::vector<dhdo::HardwareDescriptor> EthercatDiscovery::scan()
                         entry.subindex      /* pdoSubindex */
                     };
 
+                    // Assign stable UUID using the single source of truth from EthercatEntryKey.h.
+                    // This MUST match what EthercatRTBackend::buildRT() generates so catalog lookup succeeds.
+                    desc.uuid = buildEntryKey(si.vendor_id, si.product_code, isOutput,
+                                              entry.bit_length, pos, entry.index, entry.subindex);
+
                     results.push_back(std::move(desc));
                     ++entryCountForSlave;
                 }
