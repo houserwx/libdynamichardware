@@ -338,22 +338,28 @@ void SimulatedRTBackend::onBeforeReadInputs() noexcept
 
                 int32_t val32 = static_cast<int32_t>(sim.intValue);
                 switch (dhdo::entryBitSize(sim.type)) {
-                    case dhdo::SZ_8:
-                        *(reinterpret_cast<int8_t*>(entry.image + sim.byteOffset)) = static_cast<int8_t>(val32);
+                    case dhdo::SZ_8: {
+                        int8_t val = static_cast<int8_t>(val32);
+                        std::memcpy(entry.image + sim.byteOffset, &val, sizeof(val));
                         break;
-                    case dhdo::SZ_16:
-                        *(reinterpret_cast<int16_t*>(entry.image + sim.byteOffset)) = static_cast<int16_t>(val32);
+                    }
+                    case dhdo::SZ_16: {
+                        int16_t val = static_cast<int16_t>(val32);
+                        std::memcpy(entry.image + sim.byteOffset, &val, sizeof(val));
                         break;
-                    default:
-                        *(reinterpret_cast<int32_t*>(entry.image + sim.byteOffset)) = val32;
+                    }
+                    default: {
+                        std::memcpy(entry.image + sim.byteOffset, &val32, sizeof(val32));
                         break;
+                    }
                 }
                 break;
             }
 
             case dhdo::EntryType::FloatInput: { // Sinusoidal oscillation
                 double sinVal = std::sin(sim.floatPhase) * sim.floatAmplitude + sim.floatOffset;
-                *(reinterpret_cast<float*>(entry.image + sim.byteOffset)) = static_cast<float>(sinVal);
+                float val = static_cast<float>(sinVal);
+                std::memcpy(entry.image + sim.byteOffset, &val, sizeof(val));
                 sim.floatPhase += sim.phaseIncrement;
                 if (sim.floatPhase > 2.0 * M_PI)
                     sim.floatPhase -= 2.0 * M_PI;

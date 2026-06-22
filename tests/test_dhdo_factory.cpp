@@ -80,10 +80,10 @@ TEST_CASE("DHDOFactory entryTypeToString composes names for custom bitmasks", "[
     // Unsigned 8-bit input: DIR_INPUT | BASE_INT | SZ_8 (no SIGNED bit)
     uint8_t ui8in = DIR_INPUT | BASE_INT | SZ_8;
     auto name = DHDOFactory::entryTypeToString(static_cast<EntryType>(ui8in));
-    REQUIRE(name != nullptr);
-    // Should contain "Int", "8", and "In"
-    CHECK(std::string(name).find("Int") != std::string::npos);
-    CHECK(std::string(name).find("In") != std::string::npos);
+    REQUIRE(!name.empty());
+    // Should contain "Int" and "In"
+    CHECK(name.find("Int") != std::string::npos);
+    CHECK(name.find("In") != std::string::npos);
 }
 
 // ============================================================================

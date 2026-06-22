@@ -22,40 +22,10 @@ DynamicHardwareBuilder& DynamicHardwareBuilder::catalogPath(std::string path) {
 DynamicHardwareBuilder& DynamicHardwareBuilder::enableBackend(
         std::string name, 
         const std::unordered_map<std::string, std::string>& config) {
-    
-    auto& st = orchestrator_->state_; // Access internal state for now
-    
-    if (name == "EtherCAT") {
-        st.enableEthercat = true;
-        auto it = config.find("cycleNs");
-        if (it != config.end()) {
-            st.ethercatCycleNs = static_cast<uint32_t>(std::stoul(it->second));
-        }
-    } else if (name == "GPIO") {
-        st.enableGPIO = true;
-    } else if (name == "I2C") {
-        st.enableI2C = true;
-        auto it = config.find("busPath");
-        if (it != config.end()) {
-            st.i2cBusPath = it->second;
-        }
-    } else if (name == "SPI") {
-        st.enableSPI = true;
-        auto it = config.find("busPath");
-        if (it != config.end()) {
-            st.spiBusPath = it->second;
-        }
-    } else if (name == "Simulated") {
-        st.enableSimulation = true;
-        auto it = config.find("definitionsPath");
-        if (it != config.end()) {
-            st.simDefinitionsPath = it->second;
-        }
-    } else {
-        std::fprintf(stderr, "[Builder] WARNING: Unknown backend name '%s' — ignoring\n", 
-                     name.c_str());
-    }
-    
+
+    // Pure delegation to orchestrator state — no knowledge of which backends exist.
+    // Validation happens at discover/build time when constructors succeed or fail.
+    orchestrator_->state_.enabledBackends[name] = config;
     return *this;
 }
 

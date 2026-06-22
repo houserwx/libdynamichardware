@@ -55,7 +55,8 @@ public:
     [[nodiscard]] static EntryType stringToEntryType(const std::string& channelType);
 
     /// Reverse of stringToEntryType — returns "DigitalInput", "Encoder", etc.
-    [[nodiscard]] static const char* entryTypeToString(EntryType type);
+    /// Returns std::string for thread safety (no shared mutable static buffer).
+    [[nodiscard]] static std::string entryTypeToString(EntryType type);
 
     // ---- Bit length inference ----
 

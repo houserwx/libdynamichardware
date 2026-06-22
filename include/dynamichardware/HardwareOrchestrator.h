@@ -27,24 +27,19 @@ namespace dynamichardware {
 class DynamicHardwareContextObject;
 
 /// Internal state held by orchestrator during all phases.
+/// OCP-compliant: adding new backends requires zero changes to this struct.
 struct OrchestratorState {
     std::string catalogPath{"hardware.json"};
     std::string mappingPath;  ///< Optional path for persisted channel mappings JSON
-    
-    // Backend enable flags + configuration strings (parsed from builder's config map)
-    bool enableEthercat{false};
-    uint32_t ethercatCycleNs{1'000'000u};
-    
-    bool enableGPIO{false};
-    
-    bool enableI2C{false};
-    std::string i2cBusPath{"/dev/i2c-1"};
-    
-    bool enableSPI{false};
-    std::string spiBusPath{"/dev/spidev0.0"};
-    
-    bool enableSimulation{false};
-    std::optional<std::string> simDefinitionsPath;
+
+    /// Enabled backends as name -> {config_key -> config_value} map.
+    /// Builder.enableBackend(name, config) populates this directly.
+    /// Examples:
+    ///   "EtherCAT" -> {"cycleNs": "500000"}
+    ///   "I2C"      -> {"busPath": "/dev/i2c-1"}
+    ///   "Simulated" -> {"definitionsPath": "/path/to/defs.json"}
+    std::unordered_map<std::string,
+                       std::unordered_map<std::string, std::string>> enabledBackends;
 };
 
 struct ChannelDefinition {

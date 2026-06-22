@@ -113,12 +113,10 @@ EntryType DHDOFactory::stringToEntryType(const std::string& channelType)
 
 // ============================================================================
 // entryTypeToString — EntryType → string (composited from bitmask fields)
+// Returns std::string for thread safety — no shared mutable static buffer.
 // ============================================================================
-const char* DHDOFactory::entryTypeToString(EntryType type)
+std::string DHDOFactory::entryTypeToString(EntryType type)
 {
-    // Static buffer for dynamic composition (not RT-safe, but this is init-time only)
-    static char buf[32];
-
     // Well-known convenience constants get their names directly
     if (type == EntryType::BoolInput)    return "BoolInput";
     if (type == EntryType::BoolOutput)   return "BoolOutput";
@@ -134,25 +132,28 @@ const char* DHDOFactory::entryTypeToString(EntryType type)
     if (type == EntryType::MessageOut)   return "MessageOut";
 
     // Any other bitmask composition gets a dynamic name
-    const char* dir = entryIsInput(type) ? "In" : entryIsOutput(type) ? "Out" : "";
-    const char* base;
+    std::string result;
+    if (!entryIsSigned(type)) result += 'U';
+
     switch (type & 0x18) {
-        case BASE_BOOL:  base = "Bool";  break;
-        case BASE_INT:   base = "Int";   break;
-        case BASE_FLOAT: base = "Float"; break;
-        case BASE_MSG:   base = "Msg";   break;
-        default:         base = "?";     break;
+        case BASE_BOOL:  result += "Bool";  break;
+        case BASE_INT:   result += "Int";   break;
+        case BASE_FLOAT: result += "Float"; break;
+        case BASE_MSG:   result += "Msg";   break;
+        default:         result += "?";     break;
     }
-    const char* size;
+
     switch (type & 0x60) {
-        case SZ_1:  size = "1";  break;
-        case SZ_8:  size = "8";  break;
-        case SZ_16: size = "16"; break;
-        case SZ_32: size = "32"; break;
-        default:    size = "?";  break;
+        case SZ_1:  result += "1";  break;
+        case SZ_8:  result += "8";  break;
+        case SZ_16: result += "16"; break;
+        case SZ_32: result += "32"; break;
+        default:    result += "?";  break;
     }
-    std::snprintf(buf, sizeof(buf), "%s%s%s%s", entryIsSigned(type) ? "" : "U", base, size, dir);
-    return buf;
+
+    const char* dir = entryIsInput(type) ? "In" : entryIsOutput(type) ? "Out" : "";
+    result += dir;
+    return result;
 }
 
 // ============================================================================

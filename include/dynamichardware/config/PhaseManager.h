@@ -47,6 +47,18 @@ public:
         return current_ == target;
     }
 
+    /// Explicit opt-in reset to DISCOVERY phase for intentional re-scanning scenarios
+    /// (e.g., hardware hot-plug, configuration reload).
+    /// Returns true if successful; false if already at DISCOVERY or past RUNNING.
+    [[nodiscard]] bool resetToDiscovery() noexcept {
+        // Allow reset from any phase up to BUILD_RT; once RUNNING the context is frozen.
+        if (current_ > HardwarePhase::BUILD_RT) {
+            return false;
+        }
+        current_ = HardwarePhase::DISCOVERY;
+        return true;
+    }
+
 private:
     HardwarePhase current_;
 
