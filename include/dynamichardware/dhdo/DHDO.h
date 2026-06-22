@@ -158,10 +158,6 @@ struct DHDOEntry {
     void configurePulseMs   (uint32_t ms) noexcept { pulse.configure(ms);   }
     void configureDebounceMs(uint32_t ms) noexcept { debounce.configure(ms); }
 
-    // RT hot path
-    void read()  noexcept;
-    void write() noexcept;
-
     // ---- Application accessors (typed by value format) ----
     // The catalog's channelType string provides domain semantics.
 
@@ -170,8 +166,93 @@ struct DHDOEntry {
     [[nodiscard]] int32_t getInt32()   const noexcept { return int32Val_; }  // Int32Input
     [[nodiscard]] int16_t getInt16()   const noexcept { return int16Val_; }  // Int16Input
     void                  setInt16(int16_t v)    noexcept { int16Desired_ = v; }  // Int16Output
+    void                  setInt32(int32_t v)     noexcept { int32Desired_ = v; }  // Int32Output
     [[nodiscard]] float   getFloat()   const noexcept { return floatVal_; }  // FloatInput
     void                  setFloat(float v)       noexcept { floatDesired_ = v; }  // FloatOutput
+
+    // RT hot path — inline + always_inline for compiler to fold into per-entry loop body.
+    // Uses composable bitmask dispatch via entryValueFormat()/entryBitSize() so that
+    // ALL composed EntryType values work automatically without code edits (OCP-compliant).
+    [[gnu::always_inline]] void read() noexcept {
+        if (!image) return;
+
+        uint8_t t = static_cast<uint8_t>(type);
+        uint8_t fmt = entryValueFormat(t);           // direction | base | size
+
+        // Bool input — special handling (bit-level extraction + debounce machine)
+        // BASE_BOOL == 0x00 so we check that bits [3:4] are NOT INT/FLOAT/MSG
+        if ((t & DIR_INPUT) && !(fmt & (BASE_INT | BASE_FLOAT | BASE_MSG))) {
+            const uint8_t byte = *image;
+            const bool raw = (byte >> bitOffset) & 1u;
+            boolVal_ = debounce.filter(raw, dynamichardware::rt::signalProcessNowNs());
+            return;
+        }
+
+        // Numeric inputs — memcpy based on size extracted from bitmask
+        if (!(t & DIR_INPUT)) return;                // Not an input type → skip
+        if (entryIsMessage(type)) return;            // MessageIn handled by adapter hooks
+
+        switch (entryBitSize(t)) {
+            case SZ_32:                               // Int32Input or FloatInput
+                if ((fmt & BASE_FLOAT)) {
+                    std::memcpy(&floatVal_, image, sizeof(float));
+                } else {                             // Int32Input (signed integer)
+                    std::memcpy(&int32Val_, image, sizeof(int32_t));
+                }
+                break;
+            case SZ_16:                               // Int16Input (signed integer)
+                std::memcpy(&int16Val_, image, sizeof(int16_t));
+                break;
+            case SZ_8: {                              // Int8Input (NEW — now works!)
+                int8_t val;
+                std::memcpy(&val, image, sizeof(int8_t));
+                int16Val_ = static_cast<int16_t>(val);
+                break;
+            }
+            default:                                  // SZ_1 or unknown → skip safely
+                break;
+        }
+    }
+
+    [[gnu::always_inline]] void write() noexcept {
+        if (!image) return;
+
+        uint8_t t = static_cast<uint8_t>(type);
+        uint8_t fmt = entryValueFormat(t);           // direction | base | size
+
+        // Bool output — special handling (pulse machine + bit-level commit)
+        // BASE_BOOL == 0x00 so we check that bits [3:4] are NOT INT/FLOAT/MSG
+        if ((t & DIR_OUTPUT) && !(fmt & (BASE_INT | BASE_FLOAT | BASE_MSG))) {
+            const bool pinState = pulse.tick(dynamichardware::rt::signalProcessNowNs());
+            if (pinState)     *image |=  static_cast<uint8_t>(1U << bitOffset);
+            else              *image &= static_cast<uint8_t>(~(1U << bitOffset));
+            return;
+        }
+
+        // Numeric outputs — memcpy based on size extracted from bitmask
+        if (!(t & DIR_OUTPUT)) return;               // Not an output type → skip
+        if (entryIsMessage(type)) return;            // MessageOut handled by adapter hooks
+
+        switch (entryBitSize(t)) {
+            case SZ_32:                               // Int32Output or FloatOutput
+                if ((fmt & BASE_FLOAT)) {
+                    std::memcpy(image, &floatDesired_, sizeof(float));
+                } else {                             // Int32Output (NEW — now works!)
+                    std::memcpy(image, &int32Desired_, sizeof(int32_t));
+                }
+                break;
+            case SZ_16:                               // Int16Output
+                std::memcpy(image, &int16Desired_, sizeof(int16_t));
+                break;
+            case SZ_8: {                              // Int8Output (NEW — now works!)
+                int8_t val = static_cast<int8_t>(int16Desired_);
+                std::memcpy(image, &val, sizeof(int8_t));
+                break;
+            }
+            default:                                  // SZ_1 or unknown → skip safely
+                break;
+        }
+    }
 
 private:
     // Read-side cache — updated by read()
@@ -182,6 +263,7 @@ private:
 
     // Write-side desired state
     int16_t int16Desired_{0};
+    int32_t int32Desired_{0};
     float   floatDesired_{0.0f};
 };
 
