@@ -251,9 +251,10 @@ if(LIBGPIOD_FOUND)
     if(LIBGPIOD_INCLUDE_DIR)
         target_include_directories(gpio_demo_stats PRIVATE ${LIBGPIOD_INCLUDE_DIR})
     endif()
+    install(TARGETS gpio_demo_stats RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
 
-install(TARGETS dh-discover ethercat_demo simulated_io_demo ethercat_demo_stats gpio_demo_stats
+install(TARGETS dh-discover ethercat_demo simulated_io_demo ethercat_demo_stats
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 

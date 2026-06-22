@@ -31,7 +31,7 @@ void EthercatRTBackend::configure(const std::unordered_map<std::string, std::str
 {
     auto it = config.find("cycleNs");
     if (it != config.end()) {
-        try { cycleNs_ = static_cast<uint32_t>(std::stoul(it->second)); }
+        try { std::atomic_store(&cycleNs_, static_cast<uint32_t>(std::stoul(it->second))); }
         catch (...) {
             std::fprintf(stderr, "[EtherCAT] Invalid cycleNs value '%s' — using default\n",
                          it->second.c_str());
@@ -105,7 +105,8 @@ bool EthercatRTBackend::buildRT()
     applyConfig();
 
     std::printf("[EtherCAT] Ready: %d slave(s), %zu PDO entries, cycleNs=%u\n",
-                nSlaves_, dhdos_.empty() ? 0u : dhdos_[0].entries.size(), cycleNs_);
+                nSlaves_, dhdos_.empty() ? 0u : dhdos_[0].entries.size(),
+                std::atomic_load(&cycleNs_));
 
     // 7. Wait for all slaves to reach WC_COMPLETE
     std::printf("[EtherCAT] Waiting for slaves to reach OP state...\n");
@@ -175,11 +176,13 @@ bool EthercatRTBackend::discoverAndRegister()
         // Configure DC synchronisation from kSlaveTypes table
         if (sti != nullptr) {
             const DcOpMode* dcMode = lookupDcMode(sti);
+            uint32_t curCycleNs = std::atomic_load(&cycleNs_);
             if ((dcMode != nullptr) && dcMode->assign_activate != 0U) {
-                ecrt_slave_config_dc(sc, dcMode->assign_activate, cycleNs_, 0, 0, 0);
+                ecrt_slave_config_dc(sc, dcMode->assign_activate,
+                                     curCycleNs, 0, 0, 0);
                 std::printf("[EtherCAT]   DC enabled: assign_activate=0x%04X "
                             "(%s) cycleNs=%u\n",
-                            dcMode->assign_activate, dcMode->name, cycleNs_);
+                            dcMode->assign_activate, dcMode->name, curCycleNs);
             } else {
                 ecrt_slave_config_dc(sc, 0x0000, 0, 0, 0, 0);
             }
@@ -308,7 +311,7 @@ void EthercatRTBackend::buildEntries()
 bool EthercatRTBackend::waitForCommunication(uint32_t timeoutMs)
 {
 #ifdef ETHERCAT_AVAILABLE
-    const uint32_t intervalUs = (cycleNs_ / 1000U);
+    const uint32_t intervalUs = (std::atomic_load(&cycleNs_) / 1000U);
     const int maxCycles = static_cast<int>((timeoutMs * 1000ULL) / intervalUs);
     const int logEvery = static_cast<int>(500000U / intervalUs); // ~0.5 s
 
@@ -334,6 +337,26 @@ bool EthercatRTBackend::waitForCommunication(uint32_t timeoutMs)
     (void)timeoutMs;
     return false;
 #endif
+}
+
+// ---------------------------------------------------------------------------
+// setCyclePeriod() — runtime-safe cycle update via atomic store.
+// NOTE: DC sync reconfiguration requires master deactivation which is NOT done here.
+// The new value takes effect for application time stamping immediately;
+// actual slave DC sync would need a full rebuild to propagate.
+// ---------------------------------------------------------------------------
+void EthercatRTBackend::setCyclePeriod(uint64_t nanoseconds) noexcept
+{
+    if (nanoseconds == 0) return;  // Guard against invalid zero period
+    std::atomic_store(&cycleNs_, static_cast<uint32_t>(nanoseconds));
+    std::printf("[EtherCAT] Cycle period updated to %llu ns (%.1f kHz)\n",
+                (unsigned long long)nanoseconds,
+                1'000'000'000.0 / static_cast<double>(nanoseconds));
+}
+
+uint64_t EthercatRTBackend::getCyclePeriod() const noexcept
+{
+    return static_cast<uint64_t>(std::atomic_load(&cycleNs_));
 }
 
 // ---------------------------------------------------------------------------

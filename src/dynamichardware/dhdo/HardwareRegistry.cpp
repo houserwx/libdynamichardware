@@ -122,6 +122,36 @@ bool HardwareRegistry::allBackendsHealthy() const noexcept
     return true;
 }
 
+// ---- Cycle period control -------------------------------------------
+
+void HardwareRegistry::setGlobalCyclePeriod(uint64_t nanoseconds)
+{
+    if (!nanoseconds || nanoseconds > 1'000'000'000ULL) { // Sanity: 1ns–1s range
+        std::printf("[warn] HardwareRegistry::setGlobalCyclePeriod(%llu) out of sane range — ignoring\n",
+                    static_cast<unsigned long long>(nanoseconds));
+        return;
+    }
+    for (auto& backend : backends_) {
+        uint64_t oldNs = backend->getCyclePeriod();
+        backend->setCyclePeriod(nanoseconds);
+        uint64_t newNs = backend->getCyclePeriod();
+        if (newNs != oldNs) {
+            std::printf("[info] Backend cycle period updated: %llu ns → %llu ns\n",
+                        static_cast<unsigned long long>(oldNs),
+                        static_cast<unsigned long long>(newNs));
+        }
+    }
+}
+
+uint64_t HardwareRegistry::getEffectiveCyclePeriod() const noexcept
+{
+    for (const auto& backend : backends_) {
+        uint64_t ns = backend->getCyclePeriod();
+        if (ns > 0) return ns;   // First non-zero wins
+    }
+    return 0;
+}
+
 // ---- Debug ----------------------------------------------------------
 
 std::size_t HardwareRegistry::entryCount() const noexcept

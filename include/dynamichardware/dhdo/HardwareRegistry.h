@@ -68,6 +68,16 @@ public:
     /// Each backend's isFullyCommunicating() is checked (non-RT safe, init-time only).
     [[nodiscard]] bool allBackendsHealthy() const noexcept;
 
+    // --- Cycle period control (runtime-adjustable) ---------------------
+    /// Set target cycle period across ALL registered backends.
+    /// Each backend's setCyclePeriod() hook is called — timing-aware backends
+    /// (EtherCAT DC, Simulated) use the new value immediately for phase math.
+    /// No-op backends (GPIO/I²C/SPI) ignore silently via default virtual hook.
+    void setGlobalCyclePeriod(uint64_t nanoseconds);
+
+    /// Query current cycle period from first non-zero backend, or return 0 if none set.
+    [[nodiscard]] uint64_t getEffectiveCyclePeriod() const noexcept;
+
     // --- Debug -------------------------------------------------------
     [[nodiscard]] std::size_t entryCount() const noexcept;
     void printState() const;

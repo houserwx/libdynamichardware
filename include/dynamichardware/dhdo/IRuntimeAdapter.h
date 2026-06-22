@@ -41,6 +41,17 @@ public:
     /// Optional one-time initialization after adapter is created but before RT loop.
     virtual void initialize() noexcept {}
 
+    /// Set the target RT cycle period (nanoseconds). Backends that care about timing
+    /// (e.g., EtherCAT DC sync, Simulated waveform math) can use this to adjust internal
+    /// state. Safe to call during RUNNING phase; changes take effect immediately on next
+    /// readAll/writeAll cycle. Default implementation is a no-op for backends that don't
+    /// need timing awareness (GPIO, I2C, SPI are purely reactive).
+    /// @param nanoseconds Target inter-cycle period in nanoseconds (e.g., 1'000'000 for 1ms / 1kHz)
+    virtual void setCyclePeriod(uint64_t /*nanoseconds*/) noexcept {}
+
+    /// Get the current effective cycle period (nanoseconds). Returns 0 if unknown/unset.
+    [[nodiscard]] virtual uint64_t getCyclePeriod() const noexcept { return 0; }
+
     /// Called in the RT cycle before reading input channels.
     virtual void onBeforeReadInputs()  noexcept = 0;
     /// Called in the RT cycle after writing output channels.

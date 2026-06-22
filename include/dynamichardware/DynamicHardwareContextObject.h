@@ -96,6 +96,19 @@ public:
     /// Returns total DHDOEntry count across all backends.
     [[nodiscard]] std::size_t entryCount() const noexcept;
 
+    // ---- Cycle period control (runtime-adjustable) -------------------
+
+    /// Set target cycle period in nanoseconds across ALL backends.
+    /// Delegates to registry->setGlobalCyclePeriod(). Backends that don't support
+    /// runtime adjustment use default no-op hooks (GPIO/I²C/SPI). Timing-aware
+    /// backends (EtherCAT DC, Simulated) apply immediately mid-flight.
+    /// Safe to call during RUNNING phase — designed for dynamic frequency changes.
+    void setTargetCyclePeriodNanoseconds(uint64_t nanoseconds);
+
+    /// Query effective cycle period from first non-zero backend.
+    /// Returns 0 if no backend has reported a cycle period yet.
+    [[nodiscard]] uint64_t getEffectiveCyclePeriodNanoseconds() const noexcept;
+
     // ---- Debug ----
 
     /// Print full internal state (backends, entries) to stdout.

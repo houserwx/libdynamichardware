@@ -1,9 +1,11 @@
 #pragma once
 #include "dynamichardware/dhdo/IRuntimeAdapter.h"
 #include "dynamichardware/dhdo/HardwareCatalog.h"
+#include <atomic>
+#include <cstdint>
+#include <string>
 #include <unordered_map>
 #include <vector>
-#include <atomic>
 #include <cstdint>
 #include <string>
 #include <nlohmann/json.hpp>
@@ -132,6 +134,13 @@ public:
     /// If non-empty -> filter to only those UUIDs. Fixes Issue G (LSP consistency).
     [[nodiscard]] bool build(const std::vector<dynamichardware::dhdo::MappedChannel>& channels) override;
 
+    // --- Cycle period control (runtime-safe) ---------------------------------
+    /// Update target cycle period mid-flight. Safe to call during RUNNING phase.
+    /// Changes take effect on next readAll/writeAll cycle (application time + DC sync).
+    /// NOTE: DC slave reconfiguration requires master deactivation — not performed here.
+    void setCyclePeriod(uint64_t nanoseconds) noexcept override;
+    [[nodiscard]] uint64_t getCyclePeriod() const noexcept override;
+
     // --- Status accessors ---------------------------------------------------
     [[nodiscard]] bool     isAvailable()          const noexcept { return master_ != nullptr; }
     [[nodiscard]] bool     isFullyCommunicating() const noexcept {
@@ -163,7 +172,7 @@ private:
     uint8_t*          domainData_{nullptr};
     struct { uint16_t wc_state{0}; uint16_t working_counter{0}; } lastDomainState_{};
 #endif
-    uint32_t          cycleNs_;
+    std::atomic<uint32_t> cycleNs_; ///< Lock-free mid-cycle period update — atomic for cross-thread visibility
     const Config*     config_{nullptr};
 
     int               nSlaves_{0};

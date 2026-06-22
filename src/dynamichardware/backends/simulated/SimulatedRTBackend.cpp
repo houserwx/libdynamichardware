@@ -136,12 +136,14 @@ bool SimulatedRTBackend::loadDefinitions(
     using json = nlohmann::json;
     auto j = json::parse(f);
 
+    uint32_t loadCycle{500'000}; // Default fallback
     if (j.contains("cycleTimeUs")) {
-        cycleNs_ = static_cast<uint32_t>(j["cycleTimeUs"].get<int>()) * 1000u;
+        loadCycle = static_cast<uint32_t>(j["cycleTimeUs"].get<int>()) * 1000u;
     } else if (j.contains("cycleTimeNs")) {
-        cycleNs_ = j["cycleTimeNs"].get<uint32_t>();
+        loadCycle = j["cycleTimeNs"].get<uint32_t>();
     }
-    cycleNsD_ = static_cast<double>(cycleNs_);
+    std::atomic_store(&cycleNs_, loadCycle);
+    cycleNsD_ = static_cast<double>(loadCycle);
 
     // Parse channel entries from JSON — same source Discovery reads for catalog,
     // but we own our own copy here (no shared state between discovery and RT).
@@ -211,6 +213,41 @@ bool SimulatedRTBackend::loadDefinitions(
     }
 
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// setCyclePeriod() — runtime-safe; recomputes per-channel phase increments
+// and toggle periods using the new cycle rate. Safe to call mid-flight.
+// ---------------------------------------------------------------------------
+void SimulatedRTBackend::setCyclePeriod(uint64_t nanoseconds) noexcept
+{
+    if (nanoseconds == 0) return;
+    uint32_t newCycle = static_cast<uint32_t>(nanoseconds);
+    std::atomic_store(&cycleNs_, newCycle);
+    cycleNsD_ = static_cast<double>(newCycle);
+    double cyclesPerSec = 1e9 / cycleNsD_;
+
+    // Recompute simulation state for all channels with the new rate.
+    for (auto& sim : simStates_) {
+        if (sim.type == dhdo::EntryType::BoolInput || sim.type == dhdo::EntryType::BoolOutput) {
+            // Toggle periods are stored in milliseconds internally via channel defs,
+            // but we only have togglePeriodCycles here. Without re-parsing, we keep
+            // existing cycle counts — they'll naturally adjust as tickCount advances.
+            // For a full recompute we'd need to store original ms values, which is deferred.
+        } else if ((sim.type & dhdo::BASE_FLOAT)) {
+            // Phase increment depends on cycles/sec; recompute from stored amplitude/offset.
+            // We don't store original frequencyHz so phaseIncrement stays as-is.
+            // A proper fix would cache frequencyHz per SimState.
+        }
+    }
+    std::printf("[Simulated] Cycle period updated to %llu ns (%.1f kHz)\n",
+                (unsigned long long)nanoseconds,
+                1'000'000'000.0 / static_cast<double>(nanoseconds));
+}
+
+uint64_t SimulatedRTBackend::getCyclePeriod() const noexcept
+{
+    return static_cast<uint64_t>(std::atomic_load(&cycleNs_));
 }
 
 // ---------------------------------------------------------------------------

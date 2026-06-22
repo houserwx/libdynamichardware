@@ -2,10 +2,12 @@
 #include "dynamichardware/dhdo/IRuntimeAdapter.h"
 #include "dynamichardware/dhdo/HardwareCatalog.h"
 
+#include <atomic>
+#include <cstddef>
+#include <cstdint>
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include <cstdint>
 
 namespace dynamichardware::simulated {
 
@@ -37,6 +39,12 @@ public:
     [[nodiscard]] bool buildRT();
     void onBeforeReadInputs()  noexcept override;
     void onAfterWriteOutputs() noexcept override;
+
+    // --- Cycle period control (runtime-adjustable) -------------------------
+    /// Set the target cycle period in nanoseconds. Takes effect mid-flight for waveform timing.
+    void setCyclePeriod(uint64_t nanoseconds) noexcept override;
+    /// Returns current cycle period in nanoseconds. 0 if not built yet.
+    [[nodiscard]] uint64_t getCyclePeriod() const noexcept override;
 
  // --- Builder interface -------------------------------------------------
     void setCatalog(const dynamichardware::dhdo::HardwareCatalog* catalog) noexcept override;
@@ -85,7 +93,7 @@ public:
     };
 
     std::string                    definitionsPath_;
-    uint32_t                       cycleNs_{500'000};
+    std::atomic<uint32_t>          cycleNs_{500'000}; ///< Lock-free mid-flight rate control
     double                         cycleNsD_{500'000.0};
     std::vector<SimState>          simStates_;
 

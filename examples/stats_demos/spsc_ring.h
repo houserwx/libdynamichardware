@@ -1,6 +1,6 @@
 // ============================================================================
 // spsc_ring.h — Lock-free single-producer / single-consumer fixed-size ring buffer.
-// Stores trivially-copyable POD values only (no allocations). Power-of-two capacity 
+// Stores trivially-copyable values only (no allocations). Power-of-two capacity
 // for bitwise mask ops instead of modulo division. Producer NEVER blocks or allocates.
 // ============================================================================
 
@@ -40,7 +40,7 @@ public:
         return true;
     }
 
-    /// ── Consumer side (stats thread — safe to block / sleep) ─────────────
+    /// ── Consumer side (main thread — safe to sleep/print) ────────────────
     bool pop(T& out) noexcept {
         const size_t r = read_pos_.load(std::memory_order_relaxed);
         const size_t seq = slots_[r].seq.load(std::memory_order_acquire);

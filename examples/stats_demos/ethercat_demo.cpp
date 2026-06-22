@@ -1,9 +1,13 @@
 // ============================================================================
-// ethercat_demo.cpp — EtherCAT Digital Output Demo with RT Statistics.
+// ethercat_demo.cpp — EtherCAT Digital Output Demo with Real-Time Statistics.
 // 
-// Thin entry point that wires up: builder → catalog filter → freeze → chaser loop.
-// All RT timing infrastructure (SPSC ring, stats thread) lives in ../stats_demos/.
-// Walk delay: 1 second per light. Stats printed every 5 seconds by collector thread.
+// Architecture (clean separation):
+//   Hot-path thread → walks lights, pushes period samples & channel switches to SPSC rings.
+//   Main thread     → drains rings, accumulates Welford's stats, prints every second.
+// 
+// Stats are CUMULATIVE — count grows monotonically from start to shutdown.
+// All accumulation is additive via Welford's online algorithm (no subtraction).
+// Walk delay: 1 second per light. Stats printed every second (cumulative).
 // ============================================================================
 
 #include <cstdio>
@@ -11,9 +15,7 @@
 #include <vector>
 
 #include "dynamichardware/DynamicHardwareBuilder.h"
-#include "../stats_demos/spsc_ring.h"
-#include "../stats_demos/stats_collector.h"
-#include "../stats_demos/chaser_loop.h"
+#include "../stats_demos/chaser_with_stats.h"
 
 using namespace dynamichardware;
 
@@ -69,19 +71,14 @@ int main() {
     std::printf("[Demo] Found %u digital output channel(s):\n", static_cast<unsigned>(outputs.size()));
     for (size_t i = 0; i < outputs.size(); ++i)
         std::printf("  [%zu] %s\n", i, channel_names[i].c_str());
-    std::printf("\n[Demo] Stats will print every 5 seconds. Ctrl+C to stop.\n\n");
+    std::printf("\n[Demo] [light] on each switch | [stats] every second (cumulative). Ctrl+C to stop.\n\n");
 
-    // ── Step 5: Launch stats thread + RT chaser loop ─────────────────────────
-    constexpr long long kTargetPeriodNs = 1'000'000LL;   // 1 ms target in ns (1ms cycle)
+    // ── Step 5: Launch worker thread + main drains SPSC rings in a loop ──────
+    constexpr long long kTargetPeriodNs = 1'000'000LL;   // 1 ms target cycle time
     
-    SpscRing<int64_t, 8192> timing_ring;
-    SpscRing<unsigned, 256> event_ring;
-    StatsCollector collector(timing_ring, event_ring, kTargetPeriodNs, &channel_names);
-
     try {
-
-        runChaserLoop(outputs, timing_ring, event_ring,
-                      kTargetPeriodNs, static_cast<unsigned>(1000 / 1));
+        runChaserWithStats(outputs, channel_names,
+                           kTargetPeriodNs, 1000);      // cycles_per_light: ~1s walk delay at 1kHz
     } catch (...) {
         std::fprintf(stderr, "[Demo] Unexpected exception — shutting down.\n");
     }

@@ -358,6 +358,19 @@ size_t HardwareCatalog::purgeStaleEntries()
     return purged;
 }
 
+/// Helper to convert BackendType enum to human-readable name string.
+static std::string backendTypeName(BackendType type) noexcept
+{
+    switch (type) {
+        case BackendType::ETHERCAT:   return "EtherCAT";
+        case BackendType::GPIO:       return "GPIO";
+        case BackendType::I2C:        return "I2C";
+        case BackendType::SPI:        return "SPI";
+        case BackendType::SIMULATED:  return "Simulated";
+        default:                      return "Unknown";
+    }
+}
+
 void HardwareCatalog::markOfflineForBackend(BackendType type)
 {
     // Report which backends didn't scan this cycle — orchestrator uses this to skip entire territories.
@@ -377,6 +390,31 @@ bool HardwareCatalog::hasEntriesFor(BackendType type) const noexcept
     return false;
 }
 
+size_t HardwareCatalog::countEntriesFor(BackendType type) const noexcept
+{
+    size_t n = 0;
+    for (const auto& entry : entries_)
+        if (entry.backend == type) ++n;
+    return n;
+}
+
+void HardwareCatalog::reportOfflineBackends(
+    const std::unordered_map<std::string, std::unordered_map<std::string, std::string>>& enabledBackends)
+{
+    // Report which backends had existing catalog entries but didn't scan this cycle.
+    // Orchestrator uses this to skip entire territories rather than per-entry checks.
+    static const char* gNames[] = {"Unknown", "EtherCAT", "GPIO", "I2C", "SPI", "Simulated"};
+    for (auto bt : {BackendType::ETHERCAT, BackendType::GPIO,
+                    BackendType::I2C, BackendType::SPI, BackendType::SIMULATED}) {
+        bool found = false;
+        for (const auto& kv : enabledBackends)
+            if (kv.first == gNames[static_cast<int>(bt)]) { found = true; break; }
+        if (!found && hasEntriesFor(bt)) {
+            markOfflineForBackend(bt);
+        }
+    }
+}
+
 void HardwareCatalog::endDiscovery()
 {
     // Purge stale entries first (exits discovery mode internally).
@@ -391,19 +429,6 @@ void HardwareCatalog::markAlive(const std::string& uuid)
 {
     if (discoveryMode_) {
         aliveUuids_.insert(uuid);
-    }
-}
-
-/// Helper to convert BackendType enum to human-readable name string.
-static std::string backendTypeName(BackendType type) noexcept
-{
-    switch (type) {
-        case BackendType::ETHERCAT:   return "EtherCAT";
-        case BackendType::GPIO:       return "GPIO";
-        case BackendType::I2C:        return "I2C";
-        case BackendType::SPI:        return "SPI";
-        case BackendType::SIMULATED:  return "Simulated";
-        default:                      return "Unknown";
     }
 }
 

@@ -150,6 +150,18 @@ std::size_t DynamicHardwareContextObject::entryCount() const noexcept
     return internal_.registry.entryCount();
 }
 
+// ---- Cycle period control -------------------------------------------
+
+void DynamicHardwareContextObject::setTargetCyclePeriodNanoseconds(uint64_t nanoseconds)
+{
+    internal_.registry.setGlobalCyclePeriod(nanoseconds);
+}
+
+uint64_t DynamicHardwareContextObject::getEffectiveCyclePeriodNanoseconds() const noexcept
+{
+    return internal_.registry.getEffectiveCyclePeriod();
+}
+
 // ---- Debug ----
 
 void DynamicHardwareContextObject::printState() const

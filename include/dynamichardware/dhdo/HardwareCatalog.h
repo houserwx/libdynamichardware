@@ -299,6 +299,7 @@ struct CatalogEntry {
     std::string name;          ///< Human-readable display name: "EL3632 GPIO Output"
     std::string slaveName;     ///< Short model/device name: "EL3632", "BCM2712", "MPU6050"
     bool        isOutput{false};
+    bool        isActive{true};      ///< true = entry passed discovery and is online
     bool        isSimulated{false};  ///< true for simulated channels
     SimParams   sim{};              ///< Simulation parameters (if isSimulated)
 
@@ -319,18 +320,16 @@ struct CatalogEntry {
     // Manual JSON serialization — NLOHMANN_DEFINE_TYPE_INTRUSIVE can't handle variant<backendData>.
     friend void to_json(nlohmann::json& j, const CatalogEntry& e)
     {
-        j = nlohmann::json{
-            {"uuid", e.uuid},
-            {"channelType", e.channelType},
-            {"name", e.name},
-            {"slaveName", e.slaveName},
-            {"isOutput", e.isOutput},
-            {"isActive", e.isActive},
-            {"isSimulated", e.isSimulated},
-            {"sim", e.sim},
-            {"backend", e.backend},
-            {"backendData", e.backendData}
-        };
+        j["uuid"] = e.uuid;
+        j["channelType"] = e.channelType;
+        j["name"] = e.name;
+        j["slaveName"] = e.slaveName;
+        j["isOutput"] = e.isOutput;
+        j["isActive"] = e.isActive;
+        j["isSimulated"] = e.isSimulated;
+        j["sim"] = e.sim;
+        j["backend"] = e.backend;
+        j["backendData"] = e.backendData;
     }
 
     friend void from_json(const nlohmann::json& j, CatalogEntry& e)
@@ -338,7 +337,7 @@ struct CatalogEntry {
         // Backward compatibility: old format had "key" field — skip it.
         if (j.contains("uuid") && !j["uuid"].is_null())          j.at("uuid").get_to(e.uuid);
         else if (j.contains("key") && !j["key"].is_null())       { /* Legacy format: UUID was == key; regenerate below */ }
-        j.at("channelType").get_to(e.channelType);
+        if (j.contains("channelType"))                            j.at("channelType").get_to(e.channelType);
         if (j.contains("name") && !j["name"].is_null())           j.at("name").get_to(e.name);
         if (j.contains("slaveName") && !j["slaveName"].is_null()) j.at("slaveName").get_to(e.slaveName);
         if (j.contains("isOutput"))                                j.at("isOutput").get_to(e.isOutput);
@@ -407,7 +406,8 @@ public:
     /// Report backends that had existing catalog entries but didn't scan this cycle.
     /// Takes the set of enabled backend names so we can check which ones weren't reached.
     void reportOfflineBackends(const std::unordered_map<std::string, std::unordered_map<std::string, std::string>>& enabledBackends);
-
+    /// Mark all entries for a given backend type as offline (not scanned this cycle).
+    void markOfflineForBackend(BackendType type);
     /// Check if any entries exist for a given backend type, regardless of online status.
     [[nodiscard]] bool hasEntriesFor(BackendType type) const noexcept;
 
