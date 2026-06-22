@@ -29,7 +29,7 @@ public:
     /// Build internal DHDO state from the provided channel list.
     /// Each backend looks up its own catalog entries using UUIDs and constructs
     /// internal state without external callers knowing HOW.
-    /// Returns true on success. Default stub returns false for transition compat.
+    /// Returns true on success; default implementation returns false (stub).
     [[nodiscard]] virtual bool build(const std::vector<MappedChannel>& /*channels*/) { return false; }
 
     /// Access built DHDOs after successful build().

@@ -1,6 +1,6 @@
 // ============================================================================
 // DynamicHardwareContextObject — pure RT lifecycle implementation.
-// Zero discovery knowledge. Created by DynamicHardwareContextFactory::buildRT().
+// Zero discovery knowledge. Created by HardwareOrchestrator::buildRT().
 // ============================================================================
 
 #include "dynamichardware/DynamicHardwareContextObject.h"

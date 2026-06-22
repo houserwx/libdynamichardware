@@ -7,8 +7,7 @@
 //   dh-discover --sim --catalog sim.json     # simulated backend only
 //   dh-discover --gen-simdefs cat.json out.json  # generate sim definitions from catalog
 
-#include "dynamichardware/DynamicHardwareContext.h"
-#include "dynamichardware/DynamicHardwareContextFactory.h"
+#include "dynamichardware/DynamicHardwareBuilder.h"
 #include "dynamichardware/dhdo/HardwareCatalog.h"
 #include "dynamichardware/backends/gpio/BoardVariant.h"
 
@@ -247,7 +246,7 @@ static bool inspectCatalogFile(const std::string& path)
     return inspectCatalog(catalog.entries());
 }
 
-// ── Discovery via DynamicHardwareContextFactory ───────────────
+// ── Discovery via DynamicHardwareBuilder ────────────────────────
 
 static void runSimulatedDiscovery(
         const std::optional<std::string>& catalogPath,
@@ -255,16 +254,23 @@ static void runSimulatedDiscovery(
 {
     printHeader("Simulated Backend Discovery");
 
-    dynamichardware::DynamicHardwareContextFactory factory;
-    factory.catalogPath(catalogPath.value_or("hardware.json"))
-           .withSimulation(defsPath);
+    dynamichardware::DynamicHardwareBuilder builder;
+    
+    // Configure backend with optional definitions path
+    std::unordered_map<std::string, std::string> simConfig;
+    if (defsPath.has_value()) {
+        simConfig["definitions"] = defsPath.value();
+    }
+    
+    builder.catalogPath(catalogPath.value_or("hardware.json"))
+           .enableBackend("Simulated", simConfig);
 
-    if (!factory.discover()) {
+    if (!builder.discover()) {
         std::fprintf(stderr, "[discover] Discovery failed\n");
         return;
     }
 
-    auto ctx = factory.buildRT();
+    auto ctx = builder.buildRT();
     if (!ctx) {
         std::fprintf(stderr, "[discover] Failed to build RT context\n");
         return;
@@ -283,21 +289,21 @@ static void runRealDiscovery(const std::optional<std::string>& catalogPath)
 {
     printHeader("Hardware Discovery");
 
-    dynamichardware::DynamicHardwareContextFactory factory;
-    factory.catalogPath(catalogPath.value_or("hardware.json"));
+    dynamichardware::DynamicHardwareBuilder builder;
+    builder.catalogPath(catalogPath.value_or("hardware.json"));
 
     // Enable backends based on detection
-    if (detectEtherCAT().available) factory.withEthercat();
-    if (detectGPIO().available) factory.withGPIO();
-    if (detectI2C().available) factory.withI2C();
-    if (detectSPI().available) factory.withSPI();
+    if (detectEtherCAT().available) builder.enableBackend("EtherCAT");
+    if (detectGPIO().available) builder.enableBackend("GPIO");
+    if (detectI2C().available) builder.enableBackend("I2C");
+    if (detectSPI().available) builder.enableBackend("SPI");
 
-    if (!factory.discover()) {
+    if (!builder.discover()) {
         std::fprintf(stderr, "[discover] Discovery failed\n");
         return;
     }
 
-    auto ctx = factory.buildRT();
+    auto ctx = builder.buildRT();
     if (!ctx) {
         std::fprintf(stderr, "[discover] Failed to build RT context\n");
         return;

@@ -3,7 +3,7 @@
 // ============================================================================
 // DynamicHardwareContextObject — pure RT lifecycle, zero discovery knowledge.
 //
-// Created by DynamicHardwareContextFactory::buildRT(). Owned by the application.
+// Created by HardwareOrchestrator::buildPhase(). Owned by the application.
 // Used exclusively during operation (freeze → readAll/writeAll cycles → shutdown).
 // ============================================================================
 
@@ -97,7 +97,6 @@ public:
     void printState() const;
 
 private:
-    friend class DynamicHardwareContextFactory;
     friend class HardwareOrchestrator;
     template<class T> friend struct std::default_delete;
 
@@ -116,9 +115,5 @@ private:
     Impl impl_;
     State state_{State::ACTIVE};
 };
-
-/// Type alias for backward compatibility during transition period.
-/// RuntimeContext is the canonical name; DynamicHardwareContextObject kept for existing code.
-using RuntimeContext = DynamicHardwareContextObject;
 
 } // namespace dynamichardware

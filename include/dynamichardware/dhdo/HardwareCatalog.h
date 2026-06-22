@@ -433,13 +433,6 @@ public:
     /// Find by UUID — the sole identity lookup. No "key" field exists.
     [[nodiscard]] const CatalogEntry* findByUuid(const std::string& uuid) const noexcept;
 
-    /// Find EtherCAT entry by vendorId + productCode (backward compatibility).
-    [[nodiscard]] const CatalogEntry* find(uint32_t vendorId, uint32_t productCode) const noexcept;
-
-    /// Legacy stub — kept only for backward compat with old callers.
-    [[deprecated("Use findByUuid instead")]]
-    [[nodiscard]] std::string getOrCreateUuid(const std::string&) noexcept;
-
 private:
     std::vector<CatalogEntry>               entries_;
     std::unordered_map<std::string, size_t> uuidIndex_;  ///< uuid → index (sole lookup)

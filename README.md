@@ -11,8 +11,6 @@ include/dynamichardware/
 ├── DynamicHardwareBuilder.h       # High-level fluent API (primary entry point)
 ├── HardwareOrchestrator.h         # Internal phase coordination & backend dispatch
 ├── DynamicHardwareContextObject.h # RT runtime context (freeze / readAll / writeAll)
-├── DynamicHardwareContextFactory.h  # Legacy factory (backward compatibility)
-├── DynamicHardwareContext.h       # Forwarding header (includes all above)
 ├── SimulatedDefinitionBuilder.h   # Test fixture definition generator
 │
 ├── dhdo/                          # Core process-image types (zero vtable)

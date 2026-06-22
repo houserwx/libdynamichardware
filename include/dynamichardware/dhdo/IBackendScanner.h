@@ -18,7 +18,7 @@ public:
 
     /// Scan connected hardware and return structured descriptors.
     /// Does NOT mutate any shared state — returns pure data only.
-    /// Default implementation returns empty list for backward compat during transition period.
+    /// Default implementation returns empty vector (no-op) for backends without discovery.
     [[nodiscard]] virtual std::vector<HardwareDescriptor> scan() { return {}; }
 
 protected:

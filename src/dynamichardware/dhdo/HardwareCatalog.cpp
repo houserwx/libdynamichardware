@@ -471,27 +471,6 @@ const CatalogEntry* HardwareCatalog::findByUuid(const std::string& uuid) const n
     return (it != uuidIndex_.end()) ? &entries_[it->second] : nullptr;
 }
 
-const CatalogEntry* HardwareCatalog::find(uint32_t vendorId, uint32_t productCode) const noexcept
-{
-   // Backward compatibility: search for EtherCAT entries by vendorId + productCode
-    for (const auto& e : entries_) {
-        if (e.backend != BackendType::ETHERCAT) continue;
-        auto* bd = std::get_if<EthercatBackendData>(&e.backendData);
-        if (!bd || bd->productCode != productCode) continue;
-        if (bd->vendorId == vendorId) {
-            return &e;
-        }
-    }
-    return nullptr;
-}
-
-// Legacy stub — kept for backward compat but no longer used internally.
-// Consumers should use catalog entry UUIDs directly.
-std::string HardwareCatalog::getOrCreateUuid(const std::string& /*uuid*/) noexcept
-{
-    return "";
-}
-
 // ---------------------------------------------------------------------------
 // Private helpers
 // ---------------------------------------------------------------------------

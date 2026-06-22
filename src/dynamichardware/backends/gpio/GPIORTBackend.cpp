@@ -112,14 +112,6 @@ void GPIORTBackend::syncImagePointers()
 }
 
 // ---------------------------------------------------------------------------
-// Legacy compatibility wrapper — deferredActivate now delegates to buildRT().
-void GPIORTBackend::deferredActivate()
-{
-    [[maybe_unused]] bool ok = buildRT();
-    (void)ok;  // Suppress nodiscard warning — legacy API was fire-and-forget.
-}
-
-// ---------------------------------------------------------------------------
 // IRuntimeAdapter::setCatalog() — store catalog reference for UUID resolution.
 // Called by orchestrator/factory BEFORE build(channels).
 // ---------------------------------------------------------------------------

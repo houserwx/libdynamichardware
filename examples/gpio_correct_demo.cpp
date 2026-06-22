@@ -2,7 +2,7 @@
 // gpio_correct_demo.cpp — Example consumer program for libdynamichardware.
 //
 // Demonstrates the CORRECT pattern for non-EtherCAT backends using the new builder API:
-//   1. Use DynamicHardwareBuilder instead of DynamicHardwareContextFactory (fixes C/D/E)
+//   1. Uses DynamicHardwareBuilder with clean three-phase architecture
 //   2. Discover hardware — populates catalog via BackendRegistry iteration (no hardcoded types)
 //   3. Consumer inspects catalog entries and selectively defines channels using mapChannel()
 //   4. Build RT context — orchestrator passes mapped channels TO backends as parameters (fixes F)

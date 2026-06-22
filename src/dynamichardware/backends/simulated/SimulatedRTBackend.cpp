@@ -63,12 +63,12 @@ void SimulatedRTBackend::setCatalog(const dynamichardware::dhdo::HardwareCatalog
 // ---------------------------------------------------------------------------
 // IDHDOBuilder::build(channels) — populate sim states from mapped channels.
 // Receives structured data from orchestrator instead of re-parsing JSON (fixes Issue I).
-// Falls back to loadDefinitions() if channels list is empty (backward compat).
+// Falls back to buildRT() for self-discovery when no pre-mapped channels provided.
 // ---------------------------------------------------------------------------
 bool SimulatedRTBackend::build(const std::vector<dynamichardware::dhdo::MappedChannel>& channels)
 {
     // If orchestrator provides mapped channels, use them directly.
-    // Otherwise fall back to legacy self-discovery via buildRT().
+    // Otherwise fall back to self-discovery via buildRT() for standalone use.
     if (!channels.empty()) {
         for (const auto& ch : channels) {
             SimState state{};
@@ -101,7 +101,7 @@ bool SimulatedRTBackend::build(const std::vector<dynamichardware::dhdo::MappedCh
         return true;
     }
 
-    return buildRT();  // Legacy path: parse JSON and build RT state.
+    return buildRT();  // Self-discovery path: parse definitions JSON and build RT state.
 }
 
 // ---------------------------------------------------------------------------

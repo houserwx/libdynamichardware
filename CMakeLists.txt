@@ -14,9 +14,8 @@ include(CMakePackageConfigHelpers)
 # ── Sources ──────────────────────────────────────────────────────────────────
 
 set(LD_SOURCES
-    # Context — split into separate classes (1 class per file)
+    # Context — runtime lifecycle object
     src/SimulatedDefinitionBuilder.cpp
-    src/DynamicHardwareContextFactory.cpp
     src/DynamicHardwareContextObject.cpp
     # DHDO core (transport-agnostic process image abstraction)
     src/dynamichardware/dhdo/DHDO.cpp

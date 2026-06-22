@@ -43,7 +43,7 @@ public:
     /// Pure data scan — parse JSON into HardwareDescriptor vector, no catalog mutation.
     [[nodiscard]] std::vector<dhdo::HardwareDescriptor> scan() override;
 
-    /// Legacy wrapper — calls scan(), feeds results into catalog_.
+    /// Convenience wrapper — calls scan() through IBackendScanner, feeds results into catalog_.
     [[nodiscard]] bool discover();
 
 private:

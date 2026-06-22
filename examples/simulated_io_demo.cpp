@@ -4,7 +4,7 @@
 // Demonstrates:
 //   1. Building simulated adapter definitions with SimulatedDefinitionBuilder
 //   2. Using DynamicHardwareBuilder (fluent API backed by BackendRegistry + orchestrator)
-//      instead of the legacy DynamicHardwareContextFactory (fixes Issues C, D, E, F)
+//      using the new three-phase Builder+Orchestrator architecture
 //   3. Freezing PDOs for RT operation
 //   4. Running an RT read/process/write loop using cached entry pointers
 // ============================================================================

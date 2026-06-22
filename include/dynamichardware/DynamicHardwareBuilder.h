@@ -3,7 +3,7 @@
 // ============================================================================
 // DynamicHardwareBuilder — high-level fluent API for hardware initialization.
 //
-// Replaces DynamicHardwareContextFactory with a cleaner interface that depends
+// High-level fluent API for hardware initialization — depends
 // on abstractions (IBackendScanner / IRuntimeAdapter) rather than concrete types.
 // Fixes Issue E (SRP violation) by delegating coordination to HardwareOrchestrator.
 //

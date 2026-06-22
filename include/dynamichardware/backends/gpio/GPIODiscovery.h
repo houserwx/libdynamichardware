@@ -42,7 +42,7 @@ public:
     /// Pure data scan — open chip, probe lines, return descriptors without mutating catalog.
     [[nodiscard]] std::vector<dhdo::HardwareDescriptor> scan() override;
 
-    /// Legacy wrapper — calls scan(), feeds results into catalog_.
+    /// Convenience wrapper — calls scan() through IBackendScanner, feeds results into catalog_.
     [[nodiscard]] bool discover();
 
     /// Release all resources early if desired (also called by destructor).

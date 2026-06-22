@@ -60,8 +60,6 @@ public:
     // --- RT lifecycle methods ----------------------------------------------
     /// Build PDO structure from consumer-selected entries and allocate image buffers.
     [[nodiscard]] bool buildRT();
-    /// Activate hardware handles / resources for registered lines only.
-    void activate() { deferredActivate(); }
     /// Pre-read hook: backend fills process image with fresh data.
     void onBeforeReadInputs()  noexcept override;
     /// Post-write hook: backend flushes process image to physical hardware.
@@ -75,9 +73,6 @@ public:
     /// Build RT state from mapped channel list. Looks up each UUID in the catalog
     /// and constructs internal GPIOLine entries without exposing GpioBackendData.
     [[nodiscard]] bool build(const std::vector<dynamichardware::dhdo::MappedChannel>& channels) override;
-
-    /// Legacy compatibility wrapper — delegates to buildRT().
-    void deferredActivate();
 
     [[nodiscard]] BoardVariant boardVariant() const noexcept { return variant_; }
     [[nodiscard]] std::size_t  lineCount()     const noexcept { return lines_.size(); }

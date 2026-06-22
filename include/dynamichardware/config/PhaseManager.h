@@ -17,7 +17,7 @@ namespace dynamichardware::config {
 
 enum class HardwarePhase : uint8_t {
     DISCOVERY,   ///< Scanning hardware; catalog is writable by scanners only
-    MAPPING,     ///< Consumer defines channels via mapChannel()/defineChannel() calls
+    MAPPING,     ///< Consumer defines channels via builder.mapChannel() calls
     BUILD_RT,    ///< Adapter.build(channels) constructs RT process image objects
     RUNNING,     ///< RT loop active; freeze() called; no more modifications allowed
     SHUTDOWN     ///< Context destroyed; backends released

@@ -1,9 +1,8 @@
 // ============================================================================
 // HardwareOrchestrator — internal phase coordination + backend iteration.
 // 
-// Extracted from DynamicHardwareContextFactory to fix Issue E (SRP violation).
+// Internal phase coordination extracted from monolithic factory to fix SRP violation.
 // Uses new interfaces exclusively: scan() for discovery, build(channels) for RT.
-// Old factory still works alongside; consumers migrate gradually in Phase 8.
 // ============================================================================
 
 #include "dynamichardware/HardwareOrchestrator.h"

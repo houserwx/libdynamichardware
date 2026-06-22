@@ -9,7 +9,7 @@
 // 
 // Still uses explicit backend types internally (OCP fix deferred to future),
 // but exclusively through new interfaces: scan() for discovery, build(channels)
-// for RT construction. Makes testing and migration straightforward.
+// for RT construction. Clean separation enables focused unit tests.
 // ============================================================================
 
 #include "dynamichardware/dhdo/HardwareCatalog.h"
