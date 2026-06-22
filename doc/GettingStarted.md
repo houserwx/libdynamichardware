@@ -1,6 +1,6 @@
 # libdynamichardware — Getting Started Guide
 
-This guide walks you through the standard lifecycle of a consumer program using libdynamichardware: discover hardware, define your channels, build the real-time context, freeze for RT operation, and run the read/process/write loop.
+This guide walks you through the standard lifecycle of a consumer program using libdynamichardware: discover hardware, map your channels, build the real-time context, freeze for RT operation, and run the read/process/write loop.
 
 ---
 
@@ -8,7 +8,7 @@ This guide walks you through the standard lifecycle of a consumer program using 
 
 1. [Overview](#overview)
 2. [Step 1 — Discover Hardware](#step-1--discover-hardware)
-3. [Step 2 — Define DHDO Entries](#step-2--define-dhdo-entries)
+3. [Step 2 — Map Channels](#step-2--map-channels)
 4. [Step 3 — Build Real-Time Context](#step-3--build-real-time-context)
 5. [Step 4 — Freeze for RT Operation](#step-4--freeze-for-rt-operation)
 6. [Step 5 — The RT Loop](#step-5--the-rt-loop)
@@ -22,42 +22,48 @@ This guide walks you through the standard lifecycle of a consumer program using 
 Every application follows this five-phase lifecycle:
 
 ```
-Discover → Define Channels → Build RT → Freeze → RT Loop (read / process / write)
+Discover → Map Channels → Build RT → Freeze → RT Loop (read / process / write)
 ```
 
 | Phase | What happens | Who does it |
 |---|---|---|
-| **Discover** | Backends scan hardware and populate a catalog of all available channels | Library backends |
-| **Define** | Consumer selects which catalog entries to activate as inputs or outputs | **You** (except EtherCAT) |
-| **Build RT** | Factory creates backend instances and registers `DHDOEntry` objects | Library factory |
-| **Freeze** | Locks the entry set; no more additions; hardware resources are claimed | Library context |
-| **RT Loop** | Deterministic read-process-write cycles at your target frequency | Your code |
+| **Discover** | Backends scan hardware via `scan()` and populate a catalog of all available channels | Library backends (`IBackendScanner`) |
+| **Map** | Consumer selects which catalog entries to activate as inputs or outputs with typed `EntryType` | **You** (except EtherCAT auto-maps from EEPROM) |
+| **Build RT** | Orchestrator creates backend instances, calls `build(channels)` per backend, registers `DHDOEntry` objects | `HardwareOrchestrator` + `IRuntimeAdapter` backends |
+| **Freeze** | Locks the entry set; no more additions; PDO storage shrinks; hardware resources are claimed | `DynamicHardwareContextObject::freeze()` |
+| **RT Loop** | Deterministic read-process-write cycles at your target frequency | Your code calling `ctx->readAll()/writeAll()` |
 
-### Include Header
+### Include Headers
 
-All public APIs are accessible through a single forwarding header:
+The primary entry point is the builder header:
 
 ```cpp
-#include "dynamichardware/DynamicHardwareContext.h"
+#include "dynamichardware/DynamicHardwareBuilder.h"
 using namespace dynamichardware;
+```
+
+For consumers who want backward compatibility with older code, the forwarding header still works:
+
+```cpp
+#include "dynamichardware/DynamicHardwareContext.h"  // Includes Builder + Factory + ContextObject
 ```
 
 ---
 
 ## Step 1 — Discover Hardware
 
-Create a `DynamicHardwareContextFactory`, register the backends you need, then call `discover()`. Discovery scans for physically present hardware and populates an internal catalog. It does **not** create any live I/O yet.
+Create a `DynamicHardwareBuilder`, enable the backends you need, then call `discover()`. Discovery scans for physically present hardware and populates an internal catalog. It does **not** create any live I/O yet.
 
 ```cpp
-DynamicHardwareContextFactory factory;
+DynamicHardwareBuilder builder;
 
-// Register backends — each .with*() method enables a different backend type.
-factory.catalogPath("hardware.json")       // Persist catalog between runs
-       .withGPIO();                         // GPIO lines (e.g., Raspberry Pi gpiod)
-//   .withEthercat(1'000'000u);            // EtherCAT (cycle time in microseconds)
-//   .withSimulation("defs.json");         // Simulated adapter for testing
+// Enable backends by name — each .enableBackend() call registers one transport type.
+builder.catalogPath("hardware.json")   // Persist catalog between runs
+       .enableBackend("GPIO");         // GPIO lines (e.g., Raspberry Pi gpiod)
+//   .enableBackend("EtherCAT", {{"cycleNs", "1000000"}});  // EtherCAT (cycle time in nanoseconds)
+//   .enableBackend("Simulated", {{"definitionsPath", "defs.json"}});  // Simulated adapter
 
-if (!factory.discover()) {
+if (!builder.discover()) {
     std::fprintf(stderr, "Discovery failed\n");
     return 1;
 }
@@ -65,60 +71,69 @@ if (!factory.discover()) {
 
 ### Available Backends
 
-| Method | Backend | Description |
+| Backend Name | Config Keys | Description |
 |---|---|---|
-| `.withGPIO()` | GPIO (`gpiod`) | Linux GPIO character device; discovers all available line offsets |
-| `.withEthercat(cycleTimeUs)` | EtherCAT (IgH) | Scans EtherCAT bus; reads slave EEPROMs for PDO mapping |
-| `.withSimulation(jsonFile)` | Simulated | Loads channel definitions from JSON; no real hardware required |
+| `"GPIO"` | _(none)_ | Linux GPIO character device via libgpiod v2; discovers all available line offsets |
+| `"EtherCAT"` | `cycleNs` | IgH EtherCAT stack; cycle time in nanoseconds (default: 1'000'000 = 1 ms) |
+| `"I2C"` | `busPath` | I2C bus path (default: `/dev/i2c-1`) — stub backend |
+| `"SPI"` | `busPath` | SPI bus path (default: `/dev/spidev0.0`) — stub backend |
+| `"Simulated"` | `definitionsPath` | Loads channel definitions from JSON file generated by `SimulatedDefinitionBuilder` |
+
+When optional dependencies are missing (libethercat, libgpiod), the library builds in **stub mode** — backends compile but report no hardware during discovery.
 
 ---
 
-## Step 2 — Define DHDO Entries
+## Step 2 — Map Channels
 
 > **Important:** This step is required for **all backends EXCEPT EtherCAT**.  
-> EtherCAT auto-builds its entries from the slave EEPROM PDO mappings during discovery. For every other backend, you must explicitly tell the library which channels to activate and what type they are.
+> EtherCAT auto-maps its entries from slave EEPROM PDO mappings during discovery. For every other backend, you must explicitly tell the library which channels to activate and what type they are.
 
-After `discover()`, inspect the catalog and use `factory.defineChannel()` to register each desired channel:
+After `discover()`, inspect the catalog and use `builder.mapChannel()` to register each desired channel:
 
 ```cpp
-for (const auto& entry : factory.catalog().entries()) {
+// Iterate over discovered catalog entries
+for (const auto& entry : builder.catalog().entries()) {
     // Filter by key prefix or channelType as needed.
     if (entry.key.substr(0, 5) != "GPIO|") continue;
 
-    // Define this discovered pin as a BoolOutput.
-    factory.defineChannel(entry.key, dhdo::EntryType::BoolOutput);
+    // Map this discovered pin as a BoolOutput with a friendly name.
+    builder.mapChannel(entry.uuid, dhdo::EntryType::BoolOutput, "Pump Relay");
 }
 ```
 
 ### Available Entry Types
 
+Entry types are composable bitmasks defined in `dhdo::EntryType`. Convenience constants cover all common combinations:
+
 | `dhdo::EntryType` | Description | Accessor Methods on `DHDOEntry` |
 |---|---|---|
-| `BoolInput` | Digital input (true/false) | `.getBool()` after read phase |
-| `BoolOutput` | Digital output (true/false) | `.setBool(value)` before write phase |
+| `BoolInput` / `BoolOutput` | Digital I/O (true/false) | `.getBool()` / `.setBool(value)` |
+| `Int8Input` / `Int8Output` | 8-bit signed integer | `.getInt8()` / `.setInt8(value)` |
 | `Int16Input` / `Int16Output` | 16-bit signed integer | `.getInt16()` / `.setInt16(value)` |
 | `Int32Input` / `Int32Output` | 32-bit signed integer | `.getInt32()` / `.setInt32(value)` |
 | `FloatInput` / `FloatOutput` | IEEE-754 single precision float | `.getFloat()` / `.setFloat(value)` |
 
+You can also compose custom types using the bitmask flags directly (`DIR_INPUT`, `BASE_INT`, `SZ_16`, etc.).
+
 ### EtherCAT Exception
 
-EtherCAT is the only backend that skips this step entirely. During discovery it reads each slave's EEPROM and auto-registers every PDO subindex as an active entry — you cannot cherry-pick because the process data image is a contiguous DMA region managed by the IgH domain objects.
+EtherCAT is the only backend that skips explicit channel mapping. During discovery it reads each slave's EEPROM and auto-registers every PDO subindex as an active entry — you cannot cherry-pick because the process data image is a contiguous DMA region managed by the IgH domain objects.
 
 ---
 
 ## Step 3 — Build Real-Time Context
 
-Call `buildRT()` to construct all backend instances, create live `DHDOEntry` objects from your definitions, and return a runtime context:
+Call `buildRT()` to construct all backend instances, create live `DHDOEntry` objects from your mappings, and return a runtime context:
 
 ```cpp
-auto ctx = factory.buildRT();
+auto ctx = builder.buildRT();
 if (!ctx) {
     std::fprintf(stderr, "RT context build failed\n");
     return 1;
 }
 ```
 
-The returned smart pointer owns the entire hardware registry including backends and entries.
+The returned smart pointer owns the entire hardware registry including backends (via `IRuntimeAdapter`) and entries. Internally, the orchestrator filters mapped channels per-backend and calls each backend's `build(channels)` method.
 
 ---
 
@@ -127,6 +142,7 @@ The returned smart pointer owns the entire hardware registry including backends 
 Freezing locks the entry set for real-time operation. After freeze:
 
 - No new entries can be added or removed.
+- PDO storage shrinks via `shrink_to_fit()` and re-bases entry image pointers.
 - Hardware resources are claimed (e.g., GPIO lines are requested).
 - The system becomes immutable and safe for deterministic cycling.
 
@@ -178,6 +194,8 @@ Your application's main loop follows a strict three-phase pattern every cycle:
 ctx->readAll();
 ```
 
+This calls `onBeforeReadInputs()` on each backend (virtual dispatch — exactly once per backend), then iterates all entries calling concrete `DHDOEntry::read()` (no virtual dispatch).
+
 **PROCESS** — Your application logic. Access cached `DHDOEntry` pointers directly:
 ```cpp
 // Read an input value (populated by readAll())
@@ -192,6 +210,8 @@ motorSpeed->setFloat(targetRpm * 0.1f);
 ```cpp
 ctx->writeAll();
 ```
+
+Each entry copies cached values back to its image buffer (`DHDOEntry::write()` — concrete, no vtable), then `onAfterWriteOutputs()` flushes to physical hardware (virtual dispatch — exactly once per backend).
 
 ### Full Loop Example
 
@@ -224,54 +244,76 @@ ctx->shutdown();
 
 ## Complete Minimal Example
 
-Here is a minimal program that discovers GPIO hardware, defines two pins as digital outputs, and toggles them in an RT loop:
+Here is a minimal program using the simulated backend that demonstrates the full lifecycle:
 
 ```cpp
 #include <cstdio>
 #include <thread>
-#include "dynamichardware/DynamicHardwareContext.h"
+#include "dynamichardware/DynamicHardwareBuilder.h"
+#include "dynamichardware/SimulatedDefinitionBuilder.h"
 
 using namespace dynamichardware;
 
 int main()
 {
-    // ---- Step 1: Discover ----
-    DynamicHardwareContextFactory factory;
-    factory.catalogPath("hardware.json").withGPIO();
+    // ---- Step 0: Create simulated channel definitions ----
+    auto defs = SimulatedDefinitionBuilder::create()
+        .cycleTimeUs(1000)
+        .boolInput("LimitSwitch-A",   "sim-limit-a")
+            .togglePeriodMs(200).dutyCyclePercent(60.0f)
+        .boolOutput("Relay-Pump",     "sim-relay-pump");
 
-    if (!factory.discover()) {
-        std::fprintf(stderr, "Discovery failed\n");
+    if (!defs.save("SimulatedAdapterDefinitions.json")) {
+        std::fprintf(stderr, "[Demo] Failed to write simulated definitions\n");
         return 1;
     }
 
-    // ---- Step 2: Define channels (NOT needed for EtherCAT) ----
-    factory.defineChannel("GPIO|00|17", dhdo::EntryType::BoolOutput);
-    factory.defineChannel("GPIO|00|27", dhdo::EntryType::BoolOutput);
+    // ---- Step 1: Discover ----
+    DynamicHardwareBuilder builder;
+    builder.catalogPath("hardware.json")
+           .enableBackend("Simulated", {{"definitionsPath", "SimulatedAdapterDefinitions.json"}});
+
+    if (!builder.discover()) {
+        std::fprintf(stderr, "[Demo] Discovery failed\n");
+        return 1;
+    }
+
+    // ---- Step 2: Map channels (auto-mapped for Simulated backend) ----
 
     // ---- Step 3: Build RT context ----
-    auto ctx = factory.buildRT();
+    auto ctx = builder.buildRT();
     if (!ctx || !ctx->freeze()) {
-        std::fprintf(stderr, "Build/freeze failed\n");
+        std::fprintf(stderr, "[Demo] Build/freeze failed\n");
         return 1;
     }
 
     // Cache entry pointers once after freeze.
-    auto* ledA = ctx->lookupByUuid("GPIO|00|17");
-    auto* ledB = ctx->lookupByUuid("GPIO|00|27");
+    auto* limit_a = ctx->lookupByUuid("sim-limit-a");
+    auto* pump    = ctx->lookupByUuid("sim-relay-pump");
+
+    if (!limit_a || !pump) {
+        std::fprintf(stderr, "[Demo] Entry lookup failed\n");
+        return 1;
+    }
 
     // ---- Step 4: RT loop ----
-    bool state = false;
-    while (true) {
+    constexpr int kCycles = 50;
+    for (int i = 0; i < kCycles; ++i) {
         ctx->readAll();                          // READ phase
-        ledA->setBool(state);                    // PROCESS phase
-        ledB->setBool(!state);
+        bool sensorActive = limit_a->getBool();   // PROCESS phase
+        pump->setBool(!sensorActive);              // Toggle relay based on sensor
+
+        printf("[Cycle %d] Limit=%s → Pump=%s\n",
+               i + 1, sensorActive ? "OPEN" : "CLOSED",
+               !sensorActive ? "ON" : "OFF");
+
         ctx->writeAll();                         // WRITE phase
 
-        state = !state;
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
 
     ctx->shutdown();                             // Graceful cleanup
+    return 0;
 }
 ```
 
@@ -279,27 +321,30 @@ int main()
 
 ## API Quick Reference
 
-### DynamicHardwareContextFactory
+### DynamicHardwareBuilder
 
 | Method | Description |
 |---|---|
 | `.catalogPath(path)` | Set path for persistent hardware catalog JSON file |
-| `.withGPIO()` | Enable GPIO backend discovery |
-| `.withEthercat(cycleTimeUs)` | Enable EtherCAT backend with specified cycle time (µs) |
-| `.withSimulation(jsonFile)` | Enable simulated backend from definition file |
-| `.discover()` | Scan all enabled backends → populate catalog. Returns `bool`. |
-| `.defineChannel(key, type)` | Register a discovered channel as an active DHDO entry |
+| `.enableBackend(name, config)` | Enable a backend by name with optional key-value configuration map |
+| `.mapChannel(keyOrUuid, type, friendlyName)` | Register a discovered channel as an active DHDO entry |
+| `.mappingPath(path)` | Set path for persisted channel mappings JSON file |
+| `.loadMappings()` | Load previously persisted mappings into the builder's definition list |
+| `.discover()` | Scan all enabled backends via `scan()` → populate catalog. Returns `bool`. |
 | `.buildRT()` | Build real-time context. Returns `std::unique_ptr<DynamicHardwareContextObject>`. |
+| `.catalog()` | Access to populated catalog (for inspection before build) |
 
 ### DynamicHardwareContextObject
 
 | Method | Description |
 |---|---|
-| `.freeze()` | Lock entries for RT operation. Must be called before first read/write cycle. |
-| `.readAll()` | Read all inputs from all backends into process image |
-| `.writeAll()` | Write all outputs from process image to physical hardware |
-| `.lookupByUuid(uuid)` | Resolve `DHDOEntry*` by key/UUID string — cache result after freeze() |
+| `.freeze()` | Lock entries and PDO storage for RT operation. Must be called before first read/write cycle. |
+| `.readAll()` | Read all inputs from all backends into process image (`noexcept`) |
+| `.writeAll()` | Write all outputs from process image to physical hardware (`noexcept`) |
+| `.lookupByUuid(uuid)` | Resolve `DHDOEntry*` by UUID string — cache result after freeze() |
+| `.lookupByName(name)` | Resolve `DHDOEntry*` by display name (slower string search, init-time only) |
 | `.shutdown()` | Stop backends and release resources |
 | `.backendCount()` | Number of registered backends |
-| `.entryCount()` | Total number of active DHDO entries |
+| `.entryCount()` | Total number of active DHDO entries across all backends |
 | `.allBackendsHealthy()` | Health check: true if all backends report healthy communication |
+| `.state()` | Current lifecycle state: `ACTIVE`, `FROZEN`, or `SHUTDOWN` |
