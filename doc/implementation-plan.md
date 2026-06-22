@@ -45,8 +45,8 @@ Two items require code changes:
 
 | Item   | Rationale                                                                                                                                                        |
 |--------|------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| OI-03  | Defense-in-depth already exists at HardwareRegistry level (frozen_ flag throws logic_error on post-freeze addBackend). Library consumers cannot access raw DHDO objects after freeze — adding per-DHDO guard is belt-and-suspenders that adds no user value. Revisit if multi-backend-per-registry pattern emerges or external backend authors need finer-grained safety guarantees.                |
-| OI-09  | POSIX dependency (\`<time.h>\`, CLOCK_MONOTONIC) accepted as target-platform constraint (Linux/ARM exclusively). Single-thread invariant documented extensively in header comments above gSignalProcessNowNs declaration. Adding runtime check requires atomics that defeat the ~10ns cost goal; adding Windows fallback adds dead code for a platform never targeted. Current documentation expansion from Phase 7 is sufficient closure.        |
+| OI-03  | Defense-in-depth already exists at HardwareRegistry level (frozen_ flag throws logic_error on post-freeze addBackend). Library consumers cannot access raw DHDO objects after freeze through any public API — adding per-DHDO guard is belt-and-suspenders that adds no user value today. **Reconsideration trigger**: If external plugin backends become common and the multi-backend-per-registry pattern emerges, revisit with a lightweight guard (simple bool flag with debug assert in \`#ifndef NDEBUG\` builds to avoid atomic overhead in release). The current enforcement chain (HardwareRegistry.frozen_ → facade restrictions) is sufficient for built-in-only usage.                |
+| OI-09  | POSIX dependency (\`<time.h>\`, CLOCK_MONOTONIC) accepted as target-platform constraint (Linux/ARM exclusively). Single-thread invariant documented extensively in header comments above gSignalProcessNowNs declaration since Phase 7. Adding runtime check requires atomics that defeat the ~10ns cost goal; adding Windows fallback adds dead code for a platform never targeted by this library. Current documentation expansion is sufficient closure for a single-platform embedded library.        |
 
 ---
 
@@ -72,27 +72,57 @@ Two-sided wiring: **(A) backends self-register**, **(B) orchestrator dispatches 
 
 #### Step 8A: Add self-registration to each backend module
 
-Each \`{Transport}Discovery.cpp\` adds a file-scope static initializer using \`std::call_once\`:
+Create a shared helper header \`include/dynamichardware/backends/registration.h\` with a macro that reduces copy-paste boilerplate for built-in and external backend authors:
 
 ```cpp
-// In src/dynamichardware/backends/ethercat/EthercatDiscovery.cpp
-static std::once_flag sRegistrationFlag;
+// include/dynamichardware/backends/registration.h
+#pragma once
+#include "dynamichardware/config/BackendRegistry.h"
+#include <mutex>
 
-static void registerEthercatBackend() {
-    config::BackendRegistry::registerBackend("EtherCAT", []() {
-        return std::make_pair(
-            std::make_unique<ethercat::EthercatDiscovery>(),
-            std::make_unique<ethercat::EthercatRTBackend>()
-        );
-    });
-}
-
-namespace { struct Registrar { Registrar() { std::call_once(sRegistrationFlag, registerEthercatBackend); } }; static constexpr Registrar sRegistrar{}; }
+/// Register a backend at static-init time using std::call_once for thread-safety.
+/// Usage in any .cpp file:
+///   REGISTER_BACKEND("EtherCAT", []() {
+///       return std::make_pair(
+///           std::make_unique<ethercat::EthercatDiscovery>(),
+///           std::make_unique<ethercat::EthercatRTBackend>()
+///       );
+///   });
+#define REGISTER_BACKEND(Name, CreatorLambda) \\
+    namespace { \\
+        struct Registrar_##__LINE__ { \\
+            static std::once_flag sRegFlag; \\
+            static void registerOnce() { \\
+                config::BackendRegistry::registerBackend(Name, CreatorLambda); \\
+            } \\
+            Registrar_##__LINE__() { std::call_once(sRegFlag, &Registrar_##__LINE__::registerOnce); } \\
+        }; \\
+        static constexpr Registrar_##__LINE__ sRegistrar_##__LINE__{}; \\
+    }
 ```
 
-Same pattern for all five backends (GPIO, I2C, SPI, Simulated). Each registers under its canonical name string ("GPIO", "I2C", "SPI", "Simulated"). The creator lambda captures no external state — construction parameters are passed post-construction via the adapter's existing configure/setup methods or extracted from the orchestrator's enabledBackends config map.
+Each \`{Transport}Discovery.cpp\` uses the macro once at file scope:
 
-**Self-registration safety note:** The call_once guard handles edge cases where multiple TUs might trigger registration. Static constexpr instance ensures initialization during C++ static init phase with exactly-once guarantee. Pattern should be copied verbatim by future backend authors.
+```cpp
+// In src/dynamichardware/backends/ethercat/EthercatDiscovery.cpp (bottom of file)
+REGISTER_BACKEND("EtherCAT", []() {
+    return std::make_pair(
+        std::make_unique<ethercat::EthercatDiscovery>(),
+        std::make_unique<ethercat::EthercatRTBackend>()
+    );
+});
+```
+
+Same pattern for all five backends (GPIO, I2C, SPI, Simulated). Each registers under its canonical name string ("GPIO", "I2C", "SPI", "Simulated"). The creator lambda captures no external state — construction parameters are passed post-construction via a dedicated configure hook on IRuntimeAdapter.
+
+**Config passing design:** After creation, the orchestrator calls \`adapter->configure(configMap)\` with the per-backend config map from \`enabledBackends[name]\`. This enables parameterized backends without modifying the creator signature:
+- EtherCAT: \`{"cycleNs": "500000"}\`
+- I2C: \`{"busPath": "/dev/i2c-1"}\`
+- Simulated: \`{"definitionsPath": "/path/to/defs.json"}\`
+
+The configure method should be added to IRuntimeAdapter if not already present, accepting \`std::unordered_map<std::string, std::string>\`. Backends ignore unknown keys gracefully (forward-compatible).
+
+**Self-registration safety note:** The call_once guard handles edge cases where multiple TUs might trigger registration. Static constexpr instance ensures initialization during C++ static init phase with exactly-once guarantee. External backend authors only need to include \`registration.h\` and invoke the macro once — no boilerplate duplication required.
 
 #### Step 8B: Rewrite orchestrator dispatch to query registry
 
@@ -171,20 +201,22 @@ private:
 
 | File | Change |
 |------|--------|
-| \`src/dynamichardware/backends/ethercat/EthercatDiscovery.cpp\` | Add static self-registration block at file scope |
-| \`src/dynamichardware/backends/gpio/GPIODiscovery.cpp\` | Same pattern |
-| \`src/dynamichardware/backends/i2c/I2CDiscovery.cpp\` | Same pattern |
-| \`src/dynamichardware/backends/spi/SPIDiscovery.cpp\` | Same pattern |
-| \`src/dynamichardware/backends/simulated/SimulatedDiscovery.cpp\` | Same pattern |
-| \`include/dynamichardware/HardwareOrchestrator.h\` | Remove backend-specific includes from header (currently includes all Discovery+RTBackend headers); add \`pendingAdapters_\` map; replace runDiscoveryScan/buildRT signatures if needed for new return types or parameters |
-| \`src/HardwareOrchestrator.cpp\` | Replace ~130 lines of hardcoded backend instantiation with registry-driven iteration; remove backend-specific config extraction from orchestrator and delegate to adapter construction via creator functions. Keep backend-specific includes in .cpp only (implementation detail that doesn't leak to consumers).              |
+| **NEW** \`include/dynamichardware/backends/registration.h\` | Shared macro helper (REGISTER_BACKEND) reducing copy-paste boilerplate for self-registration. External backend authors include this single header instead of replicating call_once + static registrar pattern verbatim. |
+| \`src/dynamichardware/backends/ethercat/EthercatDiscovery.cpp\` | Add REGISTER_BACKEND invocation at file scope; verify configure(configMap) hook on RTBackend accepts per-backend params |
+| \`src/dynamichardware/backends/gpio/GPIODiscovery.cpp\` | Same pattern — REGISTER_BACKEND("GPIO", ...) |
+| \`src/dynamichardware/backends/i2c/I2CDiscovery.cpp\` | Same pattern — REGISTER_BACKEND("I2C", ...) |
+| \`src/dynamichardware/backends/spi/SPIDiscovery.cpp\` | Same pattern — REGISTER_BACKEND("SPI", ...) |
+| \`src/dynamichardware/backends/simulated/SimulatedDiscovery.cpp\` | Same pattern — REGISTER_BACKEND("Simulated", ...) |
+| \`include/dynamichardware/HardwareOrchestrator.h\` | Remove all backend-specific includes from header (currently transitively includes every Discovery+RTBackend header via explicit #include statements); add \`pendingAdapters_\` map member; forward-declare IRuntimeAdapter if needed for the map type. **Critical compile-time decoupling**: after this change, consumers including HardwareOrchestrator.h should not recompile when a new backend module is added to the build. |
+| \`include/dynamichardware/dhdo/IRuntimeAdapter.h\` | Add \`virtual void configure(const std::unordered_map<std::string, std::string>& config) = 0;\` or equivalent pure-virtual configure hook to IRuntimeAdapter interface for per-backend parameter injection post-creation. Default implementation in derived classes ignores unknown keys gracefully (forward-compatible). |
+| \`src/HardwareOrchestrator.cpp\` | Replace ~130 lines of hardcoded backend instantiation with registry-driven iteration using BackendRegistry::getAll() loop and creator function lookups; remove backend-specific config extraction logic from orchestrator entirely — delegate to adapter->configure(configMap) calls. Keep backend-specific includes only in .cpp files that implement self-registration (implementation detail that doesn't leak to library consumers through public headers).              |
 
 ### Tests Required
 
-- Update existing \`tests/test_backend_registry.cpp\`: Verify all 5 built-in backends are registered after library loads (static init runs before test main)
-- New integration test: Register a mock backend at runtime (\`BackendRegistry::registerBackend("Mock", ...)\`), call \`.enableBackend("Mock")\`, run full discover→build→freeze→readAll/writeAll cycle, verify end-to-end data flow without any hardcoded if-block involvement — proves external plugin backends work.          |
-- Regression guard: All existing unit tests pass — behavior should be identical for consumers since the public API surface is unchanged |
-- Cross-compile validation: CMake configure succeeds when EtherCAT lib is absent (stub mode) and GPIO lib is absent to ensure conditional compilation paths remain intact        |
+- Update existing \`tests/test_backend_registry.cpp\`: Verify all 5 built-in backends are registered after library loads (static init runs before test main; assert BackendRegistry::getAll() returns ≥ 5 entries with expected canonical names).
+- **End-to-end dynamically-registered mock backend test**: Create a separate TU (compiled as an object file linked into the test binary only, not the library) that calls REGISTER_BACKEND("MockTest", ...) returning a scanner that produces one dummy descriptor and an adapter that passes through read/write cycles verbatim. Run full discover→build→freeze→readAll/writeAll cycle and verify the mock backend's data flows correctly end-to-end without any hardcoded if-block involvement. This proves external plugin extensibility works without recompiling the core library.
+- Regression guard: All existing unit tests pass — behavior should be identical for consumers since the public API surface (DynamicHardwareBuilder fluent chain) is unchanged.
+- Cross-compile validation: CMake configure succeeds when EtherCAT lib is absent (stub mode) and GPIO lib is absent to ensure conditional compilation paths remain intact.
 
 ### Risk Assessment
 
@@ -212,10 +244,21 @@ Remove \`noexcept\` from both methods since they legitimately allocate:
 [[nodiscard]] std::vector<ChannelCandidate> getCandidates(uint8_t typeMask) const noexcept;
 [[nodiscard]] dhdo::DHDOEntry* lookupByName(std::string_view name) noexcept;
 
-// After (correct):
-[[nodiscard]] std::vector<ChannelCandidate> getCandidates(uint8_t typeMask) const;  // May throw bad_alloc from push_back
-[[nodiscard]] dhdo::DHDOEntry* lookupByName(std::string_view name);                  // May throw bad_alloc from string construction
+// After (correct — removed noexcept where STL allocation can legitimately throw):
+[[nodiscard]] std::vector<ChannelCandidate> getCandidates(uint8_t typeMask) const;   ///< May throw std::bad_alloc from vector::push_back during init/diagnostic phase
+[[nodiscard]] dhdo::DHDOEntry* lookupByName(std::string_view name);                   ///< May throw std::bad_alloc from temporary std::string construction if name exceeds SBO capacity
 ```
+
+**C++20 heterogeneous lookup optimization**: If the unordered_map key type is changed to \`std::string_view\` with a transparent hasher and key_equal comparator, \`lookupByName(string_view)\` can perform direct lookup without constructing a temporary \`std::string{name}\`. This eliminates the allocation risk entirely for names within SBO range. However, this requires careful handling of lifetime semantics (stored keys must outlive lookups), so the straightforward approach is removing \`noexcept\` and documenting that these methods may allocate:
+
+```cpp
+// Header documentation note added above method declarations:
+/// @note The following diagnostic/query methods are NOT marked noexcept because they
+/// legitimately allocate via STL containers or string construction.
+/// These are init-time/convenience methods never called from RT cycle paths.
+```
+
+If C++20 heterogeneous lookup is adopted in a future pass, the \`lookupByName\` method could be conditionally annotated with \`noexcept(noexcept(...))\` — but this adds complexity disproportionate to benefit for an init-only path.
 
 The convenience wrappers (\`getBoolInputCandidates()\`, etc.) call \`getCandidates()\` internally — they should also lose their \`noexcept\` annotation for consistency:
 
@@ -305,14 +348,15 @@ After both phases complete, expected score changes:
 ## Versioning & Changelog Impact
 
 ### After Phase 8 Merge (BackendRegistry wiring)
-- **Internal-only change:** Orchestrator dispatch implementation changes but consumer-facing API (\`DynamicHardwareBuilder\`) surface is unchanged — no breaking change.       |
-- **New capability:** External backends can now call \`BackendRegistry::registerBackend(name, creator_fn)\` at static init time, then use \`.enableBackend(name)\` through the fluent builder without any library source edits or recompilation.        |
-- **Changelog entry:** "Completed OCP compliance: wired BackendRegistry into orchestrator dispatch loops replacing all hardcoded backend if-block chains. All five built-in backends self-register at load time; external plugin transports supported via \`BackendRegistry::registerBackend()\`."    |
+- **Internal-only change:** Orchestrator dispatch implementation changes but consumer-facing API (\`DynamicHardwareBuilder\`) surface is unchanged — no breaking change to public headers.
+- **Header hygiene improvement:** HardwareOrchestrator.h no longer transitively includes every backend-specific header. Compile-time decoupling achieved: adding a new backend module does not force recompilation of consumers that include the orchestrator header.
+- **New capability:** External backends can now call \`REGISTER_BACKEND(name, creator_lambda)\` after including \`backends/registration.h\`, then use \`.enableBackend(name)\` through the fluent builder without any library source edits or recompilation. Per-backend configuration flows through the adapter->configure(configMap) hook for parameterized transports.
+- **Changelog entry:** "Completed full OCP compliance: wired BackendRegistry into orchestrator dispatch loops replacing all hardcoded backend if-block chains. Added REGISTER_BACKEND macro helper in backends/registration.h for zero-boilerplate self-registration. All five built-in backends self-register at load time; external plugin transports fully supported via dynamic registration with per-backend configure hooks."
 
 ### After Phase 9 Merge (noexcept fix)
-- **API change:** Five public DynamicHardwareContextObject methods lose \`noexcept\` specification. This is technically a source-compatible ABI change in some compilers (may affect generated code for callers that rely on noexcept for optimization), but functionally identical under normal operation since these are init-time diagnostic methods never called from RT paths.         |
-- **Correctness improvement:** Eliminates std::terminate risk when getCandidates() or lookupByName() execute under memory pressure during init phase. Callers can now catch \`std::bad_alloc\` and handle gracefully instead of receiving abrupt termination.      |
-- **Changelog entry:** "Fixed incorrect noexcept contracts on DynamicHardwareContextObject diagnostic methods: getCandidates(), lookupByName(), and typed candidate query wrappers now correctly propagate allocation exceptions rather than calling std::terminate(). No behavioral change under normal memory conditions."     |
+- **API change:** Five public DynamicHardwareContextObject methods lose \`noexcept\` specification. This is technically a source-compatible ABI change in some compilers (may affect generated code for callers that rely on noexcept for optimization), but functionally identical under normal operation since these are init-time diagnostic methods never called from RT paths.
+- **Correctness improvement:** Eliminates std::terminate risk when getCandidates() or lookupByName() execute under memory pressure during init phase. Callers can now catch \`std::bad_alloc\` and handle gracefully instead of receiving abrupt termination.
+- **Changelog entry:** "Fixed incorrect noexcept contracts on DynamicHardwareContextObject diagnostic methods: getCandidates(), lookupByName(), and typed candidate query wrappers now correctly propagate allocation exceptions rather than calling std::terminate(). No behavioral change under normal memory conditions."
 
 ---
 
@@ -320,4 +364,20 @@ After both phases complete, expected score changes:
 
 **SHIP-READY after Phases 8–9 complete.** The implementation plan resolves every remaining open item from the architectural analysis with a projected final composite score of ~9.30 / 10 (up from current ~9.18). Priority order: P8 → P9.
 
-After both phases merge, perform one final integration pass on target ARM hardware with performance profiling to validate sub-100µs cycle times remain maintained through the registry-driven dispatch path (should be identical to hardcoded if-block path since registry lookup is init-time only — zero overhead in RT sweep loops). Update \`examples/\` and \`dh-discover\` tool as regression guards.
+### Post-Merge Deliverables Checklist
+
+After both phases land, complete the following:
+
+| Item | Description |
+|------|-------------|
+| **Cycle-time benchmarking** | Run full integration pass on target ARM hardware (EtherCAT + GPIO setups) with performance profiling. Registry lookup is init-only — zero expected RT impact — but confirm sub-100µs cycle times are maintained through the new dispatch path. Compare readAll/writeAll/scan timings before vs. after P8 merge. |
+| **CHANGELOG.md entry** | Add top-level \`CHANGELOG.md\` (if not already present) or update existing one with summary: "Completed full OCP compliance via BackendRegistry self-registration; fixed incorrect noexcept contracts on ContextObject diagnostic methods; added REGISTER_BACKEND macro helper for external backend authors." |
+| **New Backend Guide** | Create \`doc/NewBackendGuide.md\` covering the end-to-end process of adding a custom transport: include \`registration.h\`, implement IBackendScanner + IRuntimeAdapter, invoke REGISTER_BACKEND macro once at file scope, document configure(configMap) hook contract and per-backend parameter conventions. This cements the "growing library" goal by making extension frictionless. |
+| **Examples & dh-discover regression guards** | Verify all existing examples in \`examples/\` still compile and run correctly; verify \`dh-discover\` tool discovers all registered backends without hardcoded fallback paths. |
+
+### Next Steps After All Phases Complete
+
+After post-merge deliverables are complete, consider these optional follow-ups ranked by impact:
+1. **C++20 heterogeneous lookup** in nameToUuid map (eliminates temporary string allocation in \`lookupByName\`; requires careful lifetime auditing)
+2. **Per-DHDO frozen_ guard** if external plugin ecosystem grows beyond built-in backends (OI-03 reconsideration trigger)
+3. **Plugin-style dynamic loading** via dlopen/dlclose for backends compiled as shared libraries loaded at runtime (beyond static self-registration model)
