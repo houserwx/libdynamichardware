@@ -47,7 +47,8 @@ public:
     [[nodiscard]] dhdo::DHDOEntry* lookupByUuid(std::string_view uuid) noexcept;
 
     /// Resolve a DHDOEntry by name — slower string search, use at init-time only.
-    [[nodiscard]] dhdo::DHDOEntry* lookupByName(std::string_view name) noexcept;
+    /// @note May throw std::bad_alloc from temporary std::string construction if name exceeds SBO capacity.
+    [[nodiscard]] dhdo::DHDOEntry* lookupByName(std::string_view name);
 
     /// List all discovered channels (debug / config inspection).
     [[nodiscard]] const std::vector<dhdo::CatalogEntry>& catalogEntries() const noexcept;
@@ -64,21 +65,25 @@ public:
         bool        isOutput{false};
     };
 
+    /// @note The following diagnostic/query methods are NOT marked noexcept because they
+    /// legitimately allocate via STL containers or string construction during init/diagnostic phase.
+
     /// Get candidates matching a specific EntryType bitmask filter.
     /// Pass | to combine types, e.g., dhdo::BoolInput | dhdo::BoolOutput.
-    [[nodiscard]] std::vector<ChannelCandidate> getCandidates(uint8_t typeMask) const noexcept;
+    /// @note May throw std::bad_alloc from vector::push_back during candidate collection.
+    [[nodiscard]] std::vector<ChannelCandidate> getCandidates(uint8_t typeMask) const;
 
-    /// Convenience: all BoolInput candidates.
-    [[nodiscard]] std::vector<ChannelCandidate> getBoolInputCandidates() const noexcept;
+    /// Convenience: all BoolInput candidates. May throw std::bad_alloc.
+    [[nodiscard]] std::vector<ChannelCandidate> getBoolInputCandidates() const;
 
-    /// Convenience: all BoolOutput candidates.
-    [[nodiscard]] std::vector<ChannelCandidate> getBoolOutputCandidates() const noexcept;
+    /// Convenience: all BoolOutput candidates. May throw std::bad_alloc.
+    [[nodiscard]] std::vector<ChannelCandidate> getBoolOutputCandidates() const;
 
-    /// Convenience: all FloatInput candidates.
-    [[nodiscard]] std::vector<ChannelCandidate> getFloatInputCandidates() const noexcept;
+    /// Convenience: all FloatInput candidates. May throw std::bad_alloc.
+    [[nodiscard]] std::vector<ChannelCandidate> getFloatInputCandidates() const;
 
-    /// Convenience: all FloatOutput candidates.
-    [[nodiscard]] std::vector<ChannelCandidate> getFloatOutputCandidates() const noexcept;
+    /// Convenience: all FloatOutput candidates. May throw std::bad_alloc.
+    [[nodiscard]] std::vector<ChannelCandidate> getFloatOutputCandidates() const;
 
  
 

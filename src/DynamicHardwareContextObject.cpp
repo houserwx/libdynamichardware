@@ -57,7 +57,7 @@ dhdo::DHDOEntry* DynamicHardwareContextObject::lookupByUuid(std::string_view uui
     return internal_.registry.lookupByUuid(uuid);
 }
 
-dhdo::DHDOEntry* DynamicHardwareContextObject::lookupByName(std::string_view name) noexcept
+dhdo::DHDOEntry* DynamicHardwareContextObject::lookupByName(std::string_view name)
 {
     auto it = internal_.nameToUuid.find(std::string{name});
     if (it == internal_.nameToUuid.end()) return nullptr;
@@ -72,7 +72,7 @@ const std::vector<dhdo::CatalogEntry>& DynamicHardwareContextObject::catalogEntr
 // ---- Typed candidate queries ----
 
 std::vector<DynamicHardwareContextObject::ChannelCandidate>
-DynamicHardwareContextObject::getCandidates(uint8_t typeMask) const noexcept
+DynamicHardwareContextObject::getCandidates(uint8_t typeMask) const
 {
     // We filter on channelType string matching.  Build a set of allowed types.
     struct TypeInfo {
@@ -110,25 +110,25 @@ DynamicHardwareContextObject::getCandidates(uint8_t typeMask) const noexcept
 }
 
 std::vector<DynamicHardwareContextObject::ChannelCandidate>
-DynamicHardwareContextObject::getBoolInputCandidates() const noexcept
+DynamicHardwareContextObject::getBoolInputCandidates() const
 {
     return getCandidates(dhdo::EntryType::BoolInput);
 }
 
 std::vector<DynamicHardwareContextObject::ChannelCandidate>
-DynamicHardwareContextObject::getBoolOutputCandidates() const noexcept
+DynamicHardwareContextObject::getBoolOutputCandidates() const
 {
     return getCandidates(dhdo::EntryType::BoolOutput);
 }
 
 std::vector<DynamicHardwareContextObject::ChannelCandidate>
-DynamicHardwareContextObject::getFloatInputCandidates() const noexcept
+DynamicHardwareContextObject::getFloatInputCandidates() const
 {
     return getCandidates(dhdo::EntryType::FloatInput);
 }
 
 std::vector<DynamicHardwareContextObject::ChannelCandidate>
-DynamicHardwareContextObject::getFloatOutputCandidates() const noexcept
+DynamicHardwareContextObject::getFloatOutputCandidates() const
 {
     return getCandidates(dhdo::EntryType::FloatOutput);
 }
