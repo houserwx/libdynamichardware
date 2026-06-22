@@ -1,11 +1,24 @@
 #include "dynamichardware/backends/i2c/I2CRTBackend.h"
 
 #include <cstdio>
+#include <string>
 
 namespace dynamichardware::i2c {
 
+// Default constructor for self-registration via BackendRegistry.
+I2CRTBackend::I2CRTBackend()
+    : busPath_("/dev/i2c-1") {}  // Default fallback path
+
 I2CRTBackend::I2CRTBackend(std::string busPath)
     : busPath_(std::move(busPath)) {}
+
+void I2CRTBackend::configure(const std::unordered_map<std::string, std::string>& config)
+{
+    auto it = config.find("busPath");
+    if (it != config.end()) {
+        busPath_ = it->second;
+    }
+}
 
 // ---------------------------------------------------------------------------
 // buildRT() — construct PDOs from pre-registered devices (stub mode).

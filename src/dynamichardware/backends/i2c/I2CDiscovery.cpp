@@ -3,8 +3,12 @@
 #include "dynamichardware/dhdo/HardwareCatalog.h"
 #include "dynamichardware/dhdo/HardwareDescriptor.h"
 
+#include "dynamichardware/backends/registration.h"
+#include "dynamichardware/backends/i2c/I2CRTBackend.h"
+
 #include <cstdio>
 #include <fstream>
+#include <memory>
 #include <vector>
 
 namespace dynamichardware::i2c {
@@ -76,5 +80,15 @@ bool I2CDiscovery::validateBus() noexcept
     std::ifstream devFile(busPath_);
     return devFile.good();
 }
+
+// ---------------------------------------------------------------------------
+// Self-registration with BackendRegistry — zero-boilerplate OCP compliance.
+// ---------------------------------------------------------------------------
+REGISTER_BACKEND("I2C", []() {
+    return std::make_pair(
+        std::make_unique<i2c::I2CDiscovery>(),
+        std::make_unique<i2c::I2CRTBackend>()
+    );
+});
 
 } // namespace dynamichardware::i2c

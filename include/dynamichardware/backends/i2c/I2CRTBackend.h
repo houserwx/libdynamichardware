@@ -3,6 +3,7 @@
 #include "dynamichardware/dhdo/HardwareCatalog.h"
 
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include <cstdint>
 
@@ -16,8 +17,16 @@ namespace dynamichardware::i2c {
 class I2CRTBackend final
     : public dynamichardware::dhdo::IRuntimeAdapter {
 public:
+    /// Default constructor for self-registration via BackendRegistry.
+    I2CRTBackend();
+
+    /// Legacy parameterized constructor (retained for direct instantiation).
     explicit I2CRTBackend(std::string busPath);
     ~I2CRTBackend() override = default;
+
+    /// Inject per-backend configuration from orchestrator's enabledBackends map.
+    /// Recognized keys: "busPath" (default "/dev/i2c-1").
+    void configure(const std::unordered_map<std::string, std::string>& config) override;
 
     // --- RT lifecycle methods ----------------------------------------------
     [[nodiscard]] bool buildRT();

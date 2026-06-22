@@ -24,6 +24,22 @@ static uint64_t clockNowNs() noexcept {
 }
 
 // ---------------------------------------------------------------------------
+// configure() — extract recognized keys from orchestrator config map.
+// Recognized keys: "cycleNs" (default 1000000ns = 1ms).
+// ---------------------------------------------------------------------------
+void EthercatRTBackend::configure(const std::unordered_map<std::string, std::string>& config)
+{
+    auto it = config.find("cycleNs");
+    if (it != config.end()) {
+        try { cycleNs_ = static_cast<uint32_t>(std::stoul(it->second)); }
+        catch (...) {
+            std::fprintf(stderr, "[EtherCAT] Invalid cycleNs value '%s' — using default\n",
+                         it->second.c_str());
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Destructor — release all RT resources.
 // ---------------------------------------------------------------------------
 

@@ -6,30 +6,23 @@
 // ============================================================================
 
 #include "dynamichardware/HardwareOrchestrator.h"
+#include "dynamichardware/dhdo/IBackendScanner.h"
 
 #include "dynamichardware/DynamicHardwareContextObject.h"
 #include "dynamichardware/dhdo/HardwareRegistry.h"
 #include "dynamichardware/dhdo/DHDOFactory.h"
+#include "dynamichardware/config/BackendRegistry.h"
 
-// Discovery backends
-#include "dynamichardware/backends/ethercat/EthercatDiscovery.h"
-#include "dynamichardware/backends/gpio/GPIODiscovery.h"
-#include "dynamichardware/backends/i2c/I2CDiscovery.h"
-#include "dynamichardware/backends/spi/SPIDiscovery.h"
-#include "dynamichardware/backends/simulated/SimulatedDiscovery.h"
-
-// Runtime backends
-#include "dynamichardware/backends/ethercat/EthercatRTBackend.h"
-#include "dynamichardware/backends/gpio/GPIORTBackend.h"
-#include "dynamichardware/backends/i2c/I2CRTBackend.h"
-#include "dynamichardware/backends/spi/SPIRTBackend.h"
-#include "dynamichardware/backends/simulated/SimulatedRTBackend.h"
+// Backend-specific includes removed from orchestrator source.
+// All backend instantiation now flows through BackendRegistry self-registration.
+// Backends include their own headers in their .cpp files where REGISTER_BACKEND lives.
 
 // For mapping persistence — need nlohmann::json for save/load mappings
 #include <nlohmann/json.hpp>
 
 #include <cstdio>
 #include <fstream>
+#include <set>
 #include <string>
 
 namespace dynamichardware {
@@ -124,93 +117,53 @@ void HardwareOrchestrator::saveMappings() {
 // Discovery phase — scan() pipeline feeds into catalog, then purge stale entries
 // ============================================================================
 
-// Helper: extract a config value from an enabledBackends sub-map with fallback default.
-static const char* getConfig(const std::unordered_map<std::string, std::string>& cfg,
-                             const char* key, const char* def) noexcept {
-    auto it = cfg.find(key);
-    return (it != cfg.end()) ? it->second.c_str() : def;
-}
-
 bool HardwareOrchestrator::runDiscoveryScan() {
     bool anyDiscovered = false;
 
     for (const auto& [name, cfg] : state_.enabledBackends) {
-        // EtherCAT — one-shot scan via temporary object (all IgH resources released on scope exit)
-        if (name == "EtherCAT") {
-            uint32_t cycleNs = 1'000'000u;
-            auto it = cfg.find("cycleNs");
-            if (it != cfg.end()) {
-                try { cycleNs = static_cast<uint32_t>(std::stoul(it->second)); } catch (...) {}
-            }
-            ethercat::EthercatDiscovery discovery(cycleNs);
-            discovery.setCatalog(&catalog_);
-            std::printf("[Discover] Scanning EtherCAT devices...\n");
-            if (discovery.discover()) {
-                anyDiscovered = true;
-            } else {
-                std::printf("[Discover] EtherCAT discovery failed (no hardware or stub mode)\n");
-            }
-        }
-
-        // GPIO — one-shot scan via temporary object
-        else if (name == "GPIO") {
-            gpio::GPIODiscovery gpioDiscovery;
-            gpioDiscovery.setCatalog(&catalog_);
-            auto variant = gpioDiscovery.boardVariant();
-            if (variant == gpio::BoardVariant::UNKNOWN) {
-                std::printf("[Discover] Skipping GPIO backend — not a recognized embedded platform\n");
-            } else {
-                std::printf("[Discover] Scanning GPIO lines (%s)...\n",
-                            gpio::boardVariantName(variant).c_str());
-                if (!gpioDiscovery.discover()) {
-                    std::printf("[Discover] GPIO discovery failed\n");
-                } else {
-                    anyDiscovered = true;
-                }
-            }
-        }
-
-        // I2C — one-shot scan, then destroy
-        else if (name == "I2C") {
-            i2c::I2CDiscovery i2cDiscovery(getConfig(cfg, "busPath", "/dev/i2c-1"));
-            i2cDiscovery.setCatalog(&catalog_);
-            std::printf("[Discover] Scanning I2C devices...\n");
-            if (!i2cDiscovery.discover()) {
-                std::printf("[Discover] I2C discovery failed (stub mode)\n");
-            } else {
-                anyDiscovered = true;
-            }
-        }
-
-        // SPI — one-shot scan, then destroy
-        else if (name == "SPI") {
-            spi::SPIDiscovery spiDiscovery(getConfig(cfg, "busPath", "/dev/spidev0.0"));
-            spiDiscovery.setCatalog(&catalog_);
-            std::printf("[Discover] Scanning SPI devices...\n");
-            if (!spiDiscovery.discover()) {
-                std::printf("[Discover] SPI discovery failed (stub mode)\n");
-            } else {
-                anyDiscovered = true;
-            }
-        }
-
-        // Simulated — one-shot scan, then destroy
-        else if (name == "Simulated") {
-            simulated::SimulatedDiscovery simDiscovery(getConfig(cfg, "definitionsPath", ""));
-            simDiscovery.setCatalog(&catalog_);
-            std::printf("[Discover] Scanning Simulated entries...\n");
-            if (!simDiscovery.discover()) {
-                std::printf("[Discover] Simulated discovery failed\n");
-            } else {
-                anyDiscovered = true;
-            }
-        }
-
-        // Unknown backend name — warn but don't fail (graceful degradation)
-        else {
+        // Registry-driven dispatch: look up creator function by backend name.
+        // Zero hardcoded branches — new backends self-register via REGISTER_BACKEND macro.
+        const auto* creator = config::BackendRegistry::getCreator(name);
+        if (!creator) {
             std::fprintf(stderr,
-                "[Discover] WARNING: Backend '%s' is enabled but has no known scanner — skipping\n",
+                "[Discover] WARNING: Backend '%s' requested but not in registry — skipping\n",
                 name.c_str());
+            continue;  // Non-fatal: allow other backends to proceed with partial configuration
+        }
+
+        // Creator returns scanner+adapter pair — scanner used here, adapter stored for buildRT()
+        auto [scanner, adapter] = (*creator)();
+
+        // Post-creation configure hook injects per-backend parameters from enabledBackends map
+        scanner->configure(cfg);
+        adapter->configure(cfg);
+
+        // Pure-data scan flow:
+        // scan() returns descriptors without mutating shared catalog state.
+        // orchestrator converts descriptors to CatalogEntry objects inline.
+        std::printf("[Discover] Scanning %s devices...\n", name.c_str());
+        auto descriptors = scanner->scan();
+        for (auto& desc : descriptors) {
+            dhdo::CatalogEntry entry{};
+            entry.uuid          = desc.uuid;
+            entry.channelType   = desc.channelType;
+            entry.name          = desc.name;
+            entry.slaveName     = "Unknown";  // Will be overridden by backend-specific metadata
+            entry.isOutput      = desc.isOutput;
+            entry.backend       = desc.backend;
+            entry.backendData   = std::move(desc.backendData);
+            catalog_.addEntry(std::move(entry));
+        }
+
+        bool found = !descriptors.empty();
+
+        // Store adapter between discovery and build phases
+        pendingAdapters_[name] = std::move(adapter);
+
+        if (found) {
+            anyDiscovered = true;
+        } else {
+            std::printf("[Discover] %s discovery returned no entries (stub mode or unavailable)\n", name.c_str());
         }
     }
 
@@ -265,7 +218,7 @@ bool HardwareOrchestrator::discover() {
                     "[Mapping] WARNING: Previously-mapped entry '%s' "
                     "(type=%s) no longer exists in discovered hardware!\n",
                     cdef.keyOrUuid.c_str(),
-                    dhdo::DHDOFactory::entryTypeToString(cdef.type));
+                    dhdo::DHDOFactory::entryTypeToString(cdef.type).c_str());
             }
         }
         if (staleCount > 0) {
@@ -318,92 +271,31 @@ std::unique_ptr<DynamicHardwareContextObject> HardwareOrchestrator::buildRT() {
         }
     }
 
-    // Create RT backend objects and build them against the discovered catalog.
+    // Build RT backends from adapters created during discovery phase.
+    // Registry-driven dispatch: iterate over pendingAdapters_ populated by runDiscoveryScan().
     dhdo::HardwareRegistry registry;
 
-    for (const auto& [name, cfg] : state_.enabledBackends) {
-        // EtherCAT
-        if (name == "EtherCAT") {
-            uint32_t cycleNs = 1'000'000u;
-            auto it = cfg.find("cycleNs");
-            if (it != cfg.end()) {
-                try { cycleNs = static_cast<uint32_t>(std::stoul(it->second)); } catch (...) {}
-            }
-            auto rtBackend = std::make_unique<ethercat::EthercatRTBackend>(cycleNs);
-            std::printf("[RtBuild] Building EtherCAT backend...\n");
-            if (rtBackend->buildRT()) {
-                registry.addBackend(std::move(rtBackend));
+    for (auto& [name, adapter] : pendingAdapters_) {
+        // Adapter was already configured during discovery via configure(configMap).
+        // Now build its internal DHDO state.
+        std::printf("[RtBuild] Building %s backend...\n", name.c_str());
+
+        bool ok = false;
+        try {
+            // Each backend's RT adapter implements either buildRT() or build(channels).
+            // The virtual build() method is the canonical interface; fall through to it.
+            if (adapter->build({})) {
+                ok = true;
             } else {
-                std::printf("[RtBuild] EtherCAT RT setup failed\n");
+                std::printf("[RtBuild] %s RT setup failed — skipping\n", name.c_str());
             }
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "[RtBuild] %s build threw: %s — skipping\n",
+                         name.c_str(), e.what());
         }
 
-        // GPIO
-        else if (name == "GPIO") {
-            auto rtBackend = std::make_unique<gpio::GPIORTBackend>();
-            auto variant = rtBackend->boardVariant();
-            if (variant != gpio::BoardVariant::UNKNOWN) {
-                // Collect mapped channels for this backend — no backend-specific data types leak out.
-                std::vector<dhdo::MappedChannel> gpioChannels;
-                for (const auto& cdef : channelDefs_) {
-                    const auto* catEntry = catalog_.findByUuid(cdef.keyOrUuid);
-                    if (!catEntry || catEntry->backend != dhdo::BackendType::GPIO) continue;
-
-                    gpioChannels.push_back({cdef.keyOrUuid, cdef.type, ""});
-                }
-
-                // Backend resolves its own UUIDs internally via catalog reference.
-                rtBackend->setCatalog(&catalog_);
-
-                std::printf("[RtBuild] Building GPIO backend (%s)...\n",
-                            gpio::boardVariantName(variant).c_str());
-                if (rtBackend->build(gpioChannels)) {
-                    registry.addBackend(std::move(rtBackend));
-                } else {
-                    std::printf("[RtBuild] GPIO RT setup failed\n");
-                }
-            }
-        }
-
-        // I2C
-        else if (name == "I2C") {
-            auto rtBackend = std::make_unique<i2c::I2CRTBackend>(getConfig(cfg, "busPath", "/dev/i2c-1"));
-            std::printf("[RtBuild] Building I2C backend...\n");
-            if (rtBackend->buildRT()) {
-                registry.addBackend(std::move(rtBackend));
-            } else {
-                std::printf("[RtBuild] I2C RT setup failed\n");
-            }
-        }
-
-        // SPI
-        else if (name == "SPI") {
-            auto rtBackend = std::make_unique<spi::SPIRTBackend>(getConfig(cfg, "busPath", "/dev/spidev0.0"));
-            std::printf("[RtBuild] Building SPI backend...\n");
-            if (rtBackend->buildRT()) {
-                registry.addBackend(std::move(rtBackend));
-            } else {
-                std::printf("[RtBuild] SPI RT setup failed\n");
-            }
-        }
-
-        // Simulated
-        else if (name == "Simulated") {
-            auto rtBackend = std::make_unique<simulated::SimulatedRTBackend>(
-                    getConfig(cfg, "definitionsPath", ""));
-            std::printf("[RtBuild] Building Simulated backend...\n");
-            if (rtBackend->buildRT()) {
-                registry.addBackend(std::move(rtBackend));
-            } else {
-                std::printf("[RtBuild] Simulated RT setup failed\n");
-            }
-        }
-
-        // Unknown backend name — warn but don't fail
-        else {
-            std::fprintf(stderr,
-                "[RtBuild] WARNING: Backend '%s' has no known RT adapter — skipping\n",
-                name.c_str());
+        if (ok) {
+            registry.addBackend(std::move(adapter));
         }
     }
 

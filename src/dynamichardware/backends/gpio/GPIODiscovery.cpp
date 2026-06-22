@@ -2,6 +2,10 @@
 #include "dynamichardware/dhdo/HardwareCatalog.h"
 #include "dynamichardware/dhdo/HardwareDescriptor.h"
 
+#include "dynamichardware/backends/registration.h"
+#include "dynamichardware/backends/gpio/GPIORTBackend.h"
+
+#include <memory>
 #include <variant>
 #include <vector>
 
@@ -185,5 +189,15 @@ bool GPIODiscovery::discover()
 
     return !descriptors.empty();
 }
+
+// ---------------------------------------------------------------------------
+// Self-registration with BackendRegistry — zero-boilerplate OCP compliance.
+// ---------------------------------------------------------------------------
+REGISTER_BACKEND("GPIO", []() {
+    return std::make_pair(
+        std::make_unique<gpio::GPIODiscovery>(),
+        std::make_unique<gpio::GPIORTBackend>()
+    );
+});
 
 } // namespace dynamichardware::gpio

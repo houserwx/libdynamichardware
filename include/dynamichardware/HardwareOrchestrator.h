@@ -7,9 +7,10 @@
 // backend dispatch) from the public fluent API (DynamicHardwareBuilder).
 // Fixes Issue E (SRP violation — god class had too many responsibilities).
 // 
-// Still uses explicit backend types internally (OCP fix deferred to future),
-// but exclusively through new interfaces: scan() for discovery, build(channels)
-// for RT construction. Clean separation enables focused unit tests.
+// Uses BackendRegistry for OCP-compliant dispatch — zero hardcoded branches per
+// transport. Backends self-register at static init time via REGISTER_BACKEND macro.
+// Exclusively operates through interfaces: scan() for discovery, buildRT()/build()
+// for RT construction.
 // ============================================================================
 
 #include "dynamichardware/dhdo/HardwareCatalog.h"
@@ -25,6 +26,7 @@
 namespace dynamichardware {
 
 class DynamicHardwareContextObject;
+namespace dhdo { class IRuntimeAdapter; }
 
 /// Internal state held by orchestrator during all phases.
 /// OCP-compliant: adding new backends requires zero changes to this struct.
@@ -85,9 +87,13 @@ private:
     config::PhaseManager phaseManager_;
     
     std::vector<ChannelDefinition> channelDefs_;  ///< Consumer-defined channels
-    
-    // Discovery phase — iterate over enabled backends, call scan(), feed into catalog.
+
+    // Discovery phase — iterate over enabled backends via BackendRegistry, call scan(), feed into catalog.
     bool runDiscoveryScan();
+
+    /// Adapters created during discovery, stored for buildRT() to configure+build.
+    /// Key = backend name from enabledBackends map (e.g., "EtherCAT", "GPIO").
+    std::unordered_map<std::string, std::unique_ptr<dhdo::IRuntimeAdapter>> pendingAdapters_;
 };
 
 } // namespace dynamichardware

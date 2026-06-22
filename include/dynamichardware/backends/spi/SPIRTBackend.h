@@ -3,6 +3,7 @@
 #include "dynamichardware/dhdo/HardwareCatalog.h"
 
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include <cstdint>
 
@@ -14,8 +15,16 @@ namespace dynamichardware::spi {
 class SPIRTBackend final
     : public dynamichardware::dhdo::IRuntimeAdapter {
 public:
+    /// Default constructor for self-registration via BackendRegistry.
+    SPIRTBackend();
+
+    /// Legacy parameterized constructor (retained for direct instantiation).
     explicit SPIRTBackend(std::string busPath);
     ~SPIRTBackend() override = default;
+
+    /// Inject per-backend configuration from orchestrator's enabledBackends map.
+    /// Recognized keys: "busPath" (default "/dev/spidev0.0").
+    void configure(const std::unordered_map<std::string, std::string>& config) override;
 
     // --- RT lifecycle methods ----------------------------------------------
     [[nodiscard]] bool buildRT();

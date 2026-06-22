@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <fstream>
 #include <memory>
+#include <string>
 #include <vector>
 #include <nlohmann/json.hpp>
 
@@ -46,6 +47,18 @@ static std::size_t entryByteSize(dhdo::EntryType t) noexcept
             return sizeof(uint32_t);
         default:
             return 1;  // Safe fallback
+    }
+}
+
+// ---------------------------------------------------------------------------
+// configure() — extract recognized keys from orchestrator config map.
+// Recognized keys: "definitionsPath" (required for self-discovery path).
+// ---------------------------------------------------------------------------
+void SimulatedRTBackend::configure(const std::unordered_map<std::string, std::string>& config)
+{
+    auto it = config.find("definitionsPath");
+    if (it != config.end()) {
+        definitionsPath_ = it->second;
     }
 }
 

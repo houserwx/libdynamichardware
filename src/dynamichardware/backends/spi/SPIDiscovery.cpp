@@ -3,8 +3,12 @@
 #include "dynamichardware/dhdo/HardwareCatalog.h"
 #include "dynamichardware/dhdo/HardwareDescriptor.h"
 
+#include "dynamichardware/backends/registration.h"
+#include "dynamichardware/backends/spi/SPIRTBackend.h"
+
 #include <cstdio>
 #include <fstream>
+#include <memory>
 #include <vector>
 
 namespace dynamichardware::spi {
@@ -75,5 +79,15 @@ bool SPIDiscovery::validateBus() noexcept
     std::ifstream devFile(busPath_);
     return devFile.good();
 }
+
+// ---------------------------------------------------------------------------
+// Self-registration with BackendRegistry — zero-boilerplate OCP compliance.
+// ---------------------------------------------------------------------------
+REGISTER_BACKEND("SPI", []() {
+    return std::make_pair(
+        std::make_unique<spi::SPIDiscovery>(),
+        std::make_unique<spi::SPIRTBackend>()
+    );
+});
 
 } // namespace dynamichardware::spi

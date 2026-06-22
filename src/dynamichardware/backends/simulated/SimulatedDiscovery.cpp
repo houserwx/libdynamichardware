@@ -4,10 +4,14 @@
 #include "dynamichardware/dhdo/HardwareDescriptor.h"
 #include "dynamichardware/dhdo/DHDO.h"
 
+#include "dynamichardware/backends/registration.h"
+#include "dynamichardware/backends/simulated/SimulatedRTBackend.h"
+
 #include <cmath>
 #include <climits>
 #include <cstdio>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <vector>
 #include <nlohmann/json.hpp>
@@ -128,5 +132,15 @@ bool SimulatedDiscovery::discover()
                 descriptors.size(), definitionsPath_.c_str());
     return !descriptors.empty();
 }
+
+// ---------------------------------------------------------------------------
+// Self-registration with BackendRegistry — zero-boilerplate OCP compliance.
+// ---------------------------------------------------------------------------
+REGISTER_BACKEND("Simulated", []() {
+    return std::make_pair(
+        std::make_unique<simulated::SimulatedDiscovery>(),
+        std::make_unique<simulated::SimulatedRTBackend>()
+    );
+});
 
 } // namespace dynamichardware::simulated

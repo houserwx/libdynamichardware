@@ -3,6 +3,7 @@
 #include "dynamichardware/dhdo/HardwareCatalog.h"
 
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include <cstdint>
 
@@ -19,8 +20,16 @@ namespace dynamichardware::simulated {
 class SimulatedRTBackend final
     : public dynamichardware::dhdo::IRuntimeAdapter {
 public:
+    /// Default constructor for self-registration via BackendRegistry.
+    SimulatedRTBackend() = default;
+
+    /// Legacy parameterized constructor (retained for direct instantiation).
     explicit SimulatedRTBackend(std::string definitionsPath);
     ~SimulatedRTBackend() override = default;
+
+    /// Inject per-backend configuration from orchestrator's enabledBackends map.
+    /// Recognized keys: "definitionsPath" (default "./SimulatedAdapterDefinitions.json").
+    void configure(const std::unordered_map<std::string, std::string>& config) override;
 
     [[nodiscard]] const std::string& definitionsPath() const noexcept { return definitionsPath_; }
 

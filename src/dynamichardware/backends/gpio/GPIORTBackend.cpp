@@ -9,6 +9,18 @@
 namespace dynamichardware::gpio {
 
 // ---------------------------------------------------------------------------
+// configure() — extract recognized keys from orchestrator config map.
+// Recognized keys: "chipPath" (optional; auto-detected if not provided).
+// ---------------------------------------------------------------------------
+void GPIORTBackend::configure(const std::unordered_map<std::string, std::string>& config)
+{
+    auto it = config.find("chipPath");
+    if (it != config.end()) {
+        chipPath_ = it->second;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Constructor — auto-detect board variant
 // ---------------------------------------------------------------------------
 GPIORTBackend::GPIORTBackend()

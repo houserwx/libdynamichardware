@@ -3,6 +3,7 @@
 #include "dynamichardware/dhdo/HardwareCatalog.h"
 
 #include <string>
+#include <unordered_map>
 
 // ============================================================================
 // I2CDiscovery — one-shot I2C bus scanner.
@@ -12,10 +13,11 @@
 // No state survives into frozen RT mode.
 //
 // Lifecycle:
-//   1. Context creates I2CDiscovery instance (with bus path)
-//   2. Calls setCatalog(&catalog) so discovered channels get registered
-//   3. Calls discover() → validates bus access, populates HardwareCatalog
-//   4. Discovery object destroyed or discarded after consumer configuration phase
+//   1. Context creates I2CDiscovery instance (default or with explicit busPath)
+//   2. Calls configure(configMap) to inject per-backend parameters (busPath)
+//   3. Calls setCatalog(&catalog) so discovered channels get registered
+//   4. Calls discover() → validates bus access, populates HardwareCatalog
+//   5. Discovery object destroyed or discarded after consumer configuration phase
 //
 // Phase 1: Stub implementation — validates bus path exists via sysfs/dev check.
 // Real I2C device probing will be implemented when hardware is available.
@@ -26,8 +28,17 @@ namespace dynamichardware::i2c {
 class I2CDiscovery final
     : public dynamichardware::dhdo::IBackendScanner {
 public:
+    /// Default constructor for self-registration via BackendRegistry.
+    /// Configure post-construction with config map containing "busPath" key.
+    I2CDiscovery();
+
+    /// Legacy parameterized constructor (retained for direct instantiation).
     explicit I2CDiscovery(std::string busPath);
     ~I2CDiscovery() override = default;
+
+    /// Inject per-backend configuration from orchestrator's enabledBackends map.
+    /// Recognized keys: "busPath" (default "/dev/i2c-1").
+    void configure(const std::unordered_map<std::string, std::string>& config) override;
 
     /// Attach target catalog — discover() will register entries here after scan().
     void setCatalog(dhdo::HardwareCatalog* catalog) noexcept { catalog_ = catalog; }

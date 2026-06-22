@@ -10,6 +10,8 @@
 // ============================================================================
 
 #include "dynamichardware/dhdo/IDHDOBuilder.h"
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace dynamichardware::dhdo {
@@ -22,6 +24,10 @@ public:
     IRuntimeAdapter& operator=(const IRuntimeAdapter&) = delete;
     IRuntimeAdapter(IRuntimeAdapter&&)                 = delete;
     IRuntimeAdapter& operator=(IRuntimeAdapter&&)      = delete;
+
+    /// Post-creation configuration from orchestrator's enabledBackends config map.
+    /// Called after adapter construction but before build(). Backends ignore unknown keys.
+    virtual void configure(const std::unordered_map<std::string, std::string>& /*config*/) {}
 
     /// Optional one-time initialization after adapter is created but before RT loop.
     virtual void initialize() noexcept {}

@@ -1,10 +1,14 @@
 #include "dynamichardware/backends/ethercat/EthercatDiscovery.h"
+#include "dynamichardware/backends/ethercat/EthercatRTBackend.h"
 #include "dynamichardware/dhdo/HardwareCatalog.h"
 #include "dynamichardware/dhdo/HardwareDescriptor.h"
 #include "dynamichardware/backends/ethercat/SlaveTypeInfo.h"
 #include "dynamichardware/backends/ethercat/EthercatEntryKey.h"
 
+#include "dynamichardware/backends/registration.h"
+
 #include <cstdio>
+#include <memory>
 #include <thread>
 #include <vector>
 
@@ -192,5 +196,15 @@ EthercatDiscovery::~EthercatDiscovery()
 {
     reset();
 }
+
+// ---------------------------------------------------------------------------
+// Self-registration with BackendRegistry — zero-boilerplate OCP compliance.
+// ---------------------------------------------------------------------------
+REGISTER_BACKEND("EtherCAT", []() {
+    return std::make_pair(
+        std::make_unique<ethercat::EthercatDiscovery>(),
+        std::make_unique<ethercat::EthercatRTBackend>()
+    );
+});
 
 } // namespace dynamichardware::ethercat

@@ -4,6 +4,7 @@
 #include "dynamichardware/backends/gpio/BoardVariant.h"
 
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include <cstdint>
 
@@ -33,6 +34,9 @@ public:
     GPIODiscovery(BoardVariant variant, std::string chipPath);
 
     ~GPIODiscovery() override;
+
+    /// Inject per-backend configuration from orchestrator's enabledBackends map.
+    void configure(const std::unordered_map<std::string, std::string>& config) override;
 
     /// Attach target catalog — discover() will register entries here after scan().
     void setCatalog(dhdo::HardwareCatalog* catalog) noexcept { catalog_ = catalog; }

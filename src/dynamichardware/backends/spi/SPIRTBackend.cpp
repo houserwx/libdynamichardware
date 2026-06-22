@@ -1,11 +1,24 @@
 #include "dynamichardware/backends/spi/SPIRTBackend.h"
 
 #include <cstdio>
+#include <string>
 
 namespace dynamichardware::spi {
 
+// Default constructor for self-registration via BackendRegistry.
+SPIRTBackend::SPIRTBackend()
+    : busPath_("/dev/spidev0.0") {}  // Default fallback path
+
 SPIRTBackend::SPIRTBackend(std::string busPath)
     : busPath_(std::move(busPath)) {}
+
+void SPIRTBackend::configure(const std::unordered_map<std::string, std::string>& config)
+{
+    auto it = config.find("busPath");
+    if (it != config.end()) {
+        busPath_ = it->second;
+    }
+}
 
 // ---------------------------------------------------------------------------
 // buildRT() — construct PDOs from pre-registered devices (stub mode).

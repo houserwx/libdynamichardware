@@ -1,6 +1,7 @@
 #pragma once
 #include "dynamichardware/dhdo/IRuntimeAdapter.h"
 #include "dynamichardware/dhdo/HardwareCatalog.h"
+#include <unordered_map>
 #include <vector>
 #include <atomic>
 #include <cstdint>
@@ -96,11 +97,20 @@ struct EcEntryReg {
 class EthercatRTBackend final
     : public dynamichardware::dhdo::IRuntimeAdapter {
 public:
+    /// Default constructor for self-registration via BackendRegistry.
+    /// Retains default cycle time of 1ms (1,000,000ns).
+    EthercatRTBackend() noexcept = default;
+
+    /// Legacy parameterized constructor (retained for direct instantiation).
     /// @param cycleNs  Cycle period in nanoseconds (must match DC sync configuration).
-    explicit EthercatRTBackend(uint32_t cycleNs = 1'000'000u) noexcept
+    explicit EthercatRTBackend(uint32_t cycleNs) noexcept
         : cycleNs_(cycleNs) {}
 
     ~EthercatRTBackend() override;
+
+    /// Inject per-backend configuration from orchestrator's enabledBackends map.
+    /// Recognized keys: "cycleNs" (default 1000000ns).
+    void configure(const std::unordered_map<std::string, std::string>& config) override;
 
     /// Optionally attach application Config before calling buildRT().
     void setConfig(const Config* config) noexcept { config_ = config; }

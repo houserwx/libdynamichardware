@@ -2,6 +2,7 @@
 #include "dynamichardware/dhdo/IBackendScanner.h"
 #include "dynamichardware/dhdo/HardwareCatalog.h"
 #include <cstdint>
+#include <unordered_map>
 
 // Guard IgH EtherCAT headers — only available when libethercat is installed.
 #ifdef ETHERCAT_AVAILABLE
@@ -27,11 +28,18 @@ namespace dynamichardware::ethercat {
 class EthercatDiscovery final
     : public dynamichardware::dhdo::IBackendScanner {
 public:
-    /// @param cycleNs  Cycle period in nanoseconds used for DC sync configuration hints.
-    explicit EthercatDiscovery(uint32_t cycleNs = 1'000'000u) noexcept
+    /// Default constructor for self-registration via BackendRegistry.
+    EthercatDiscovery() noexcept = default;
+
+    /// Legacy parameterized constructor (retained for direct instantiation).
+    explicit EthercatDiscovery(uint32_t cycleNs) noexcept
         : cycleNs_(cycleNs) {}
 
     ~EthercatDiscovery() override;
+
+    /// Inject per-backend configuration from orchestrator's enabledBackends map.
+    /// Recognized keys: "cycleNs" (default 1000000ns).
+    void configure(const std::unordered_map<std::string, std::string>& config) override;
 
     /// Attach target catalog — discover() will register entries here after scan().
     void setCatalog(dhdo::HardwareCatalog* catalog) noexcept { catalog_ = catalog; }

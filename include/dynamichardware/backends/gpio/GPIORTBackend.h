@@ -4,6 +4,7 @@
 #include "dynamichardware/backends/gpio/BoardVariant.h"
 
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include <cstdint>
 
@@ -52,10 +53,17 @@ struct GPIOLine {
 class GPIORTBackend final
     : public dynamichardware::dhdo::IRuntimeAdapter {
 public:
+    /// Default constructor for self-registration via BackendRegistry.
     GPIORTBackend();
+
+    /// Legacy parameterized constructor (retained for direct instantiation).
     GPIORTBackend(BoardVariant variant, std::string chipPath);
 
     ~GPIORTBackend() override;
+
+    /// Inject per-backend configuration from orchestrator's enabledBackends map.
+    /// Recognized keys: "chipPath" (optional; auto-detected if not provided).
+    void configure(const std::unordered_map<std::string, std::string>& config) override;
 
     // --- RT lifecycle methods ----------------------------------------------
     /// Build PDO structure from consumer-selected entries and allocate image buffers.

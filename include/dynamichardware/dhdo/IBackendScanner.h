@@ -9,12 +9,18 @@
 // ============================================================================
 
 #include "dynamichardware/dhdo/HardwareDescriptor.h"
+#include <unordered_map>
+#include <string>
 
 namespace dynamichardware::dhdo {
 
 class IBackendScanner {
 public:
     virtual ~IBackendScanner() = default;
+
+    /// Post-creation configuration from orchestrator's enabledBackends config map.
+    /// Called after scanner construction but before scan(). Backends ignore unknown keys.
+    virtual void configure(const std::unordered_map<std::string, std::string>& /*config*/) {}
 
     /// Scan connected hardware and return structured descriptors.
     /// Does NOT mutate any shared state — returns pure data only.
