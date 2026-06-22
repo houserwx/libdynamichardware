@@ -345,18 +345,20 @@ std::unique_ptr<DynamicHardwareContextObject> HardwareOrchestrator::buildRT() {
     }
 
     // Build name → UUID mapping from catalog using deterministic hash-based UUIDs
-    DynamicHardwareContextObject::Impl ctxImpl{std::move(registry), std::move(catalog_), {}};
-    for (const auto& entry : ctxImpl.catalog.entries()) {
+    DynamicHardwareContextObject::InternalState ctxState{
+        std::move(registry), std::move(catalog_), {}
+    };
+    for (const auto& entry : ctxState.catalog.entries()) {
         if (!entry.name.empty()) {
-            ctxImpl.nameToUuid[entry.name] = entry.uuid;
+            ctxState.nameToUuid[entry.name] = entry.uuid;
         }
     }
 
     std::printf("[RtBuild] Complete: %zu backends, %zu entries\n",
-                ctxImpl.registry.backendCount(), ctxImpl.catalog.entries().size());
+                ctxState.registry.backendCount(), ctxState.catalog.entries().size());
 
     return std::unique_ptr<DynamicHardwareContextObject>(
-        new DynamicHardwareContextObject(std::move(ctxImpl)));
+        new DynamicHardwareContextObject(std::move(ctxState)));
 }
 
 } // namespace dynamichardware

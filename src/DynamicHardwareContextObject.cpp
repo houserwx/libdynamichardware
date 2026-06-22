@@ -9,8 +9,8 @@
 
 namespace dynamichardware {
 
-DynamicHardwareContextObject::DynamicHardwareContextObject(Impl&& impl)
-    : impl_(std::move(impl))
+DynamicHardwareContextObject::DynamicHardwareContextObject(InternalState&& internal_)
+    : internal_(std::move(internal_))
 {
 }
 
@@ -25,7 +25,7 @@ bool DynamicHardwareContextObject::freeze()
 {
     if (state_ != State::ACTIVE) return false;
 
-    impl_.registry.freezeForRt();
+    internal_.registry.freezeForRt();
     state_ = State::FROZEN;
     std::printf("[Context] Frozen: %zu total PDO entries ready for RT\n", entryCount());
     return true;
@@ -42,31 +42,31 @@ void DynamicHardwareContextObject::shutdown()
 
 void DynamicHardwareContextObject::readAll() noexcept
 {
-    impl_.registry.readAll();
+    internal_.registry.readAll();
 }
 
 void DynamicHardwareContextObject::writeAll() noexcept
 {
-    impl_.registry.writeAll();
+    internal_.registry.writeAll();
 }
 
 // ---- Channel access ----
 
 dhdo::DHDOEntry* DynamicHardwareContextObject::lookupByUuid(std::string_view uuid) noexcept
 {
-    return impl_.registry.lookupByUuid(uuid);
+    return internal_.registry.lookupByUuid(uuid);
 }
 
 dhdo::DHDOEntry* DynamicHardwareContextObject::lookupByName(std::string_view name) noexcept
 {
-    auto it = impl_.nameToUuid.find(std::string{name});
-    if (it == impl_.nameToUuid.end()) return nullptr;
-    return impl_.registry.lookupByUuid(it->second);
+    auto it = internal_.nameToUuid.find(std::string{name});
+    if (it == internal_.nameToUuid.end()) return nullptr;
+    return internal_.registry.lookupByUuid(it->second);
 }
 
 const std::vector<dhdo::CatalogEntry>& DynamicHardwareContextObject::catalogEntries() const noexcept
 {
-    return impl_.catalog.entries();
+    return internal_.catalog.entries();
 }
 
 // ---- Typed candidate queries ----
@@ -94,7 +94,7 @@ DynamicHardwareContextObject::getCandidates(uint8_t typeMask) const noexcept
     };
 
     std::vector<ChannelCandidate> result;
-    for (const auto& entry : impl_.catalog.entries()) {
+    for (const auto& entry : internal_.catalog.entries()) {
         bool matches = false;
         for (const auto& ti : kTypes) {
             if ((ti.mask & typeMask) && entry.channelType == ti.typeName) {
@@ -137,24 +137,24 @@ DynamicHardwareContextObject::getFloatOutputCandidates() const noexcept
 
 std::size_t DynamicHardwareContextObject::backendCount() const noexcept
 {
-    return impl_.registry.backendCount();
+    return internal_.registry.backendCount();
 }
 
 bool DynamicHardwareContextObject::allBackendsHealthy() const noexcept
 {
-    return impl_.registry.allBackendsHealthy();
+    return internal_.registry.allBackendsHealthy();
 }
 
 std::size_t DynamicHardwareContextObject::entryCount() const noexcept
 {
-    return impl_.registry.entryCount();
+    return internal_.registry.entryCount();
 }
 
 // ---- Debug ----
 
 void DynamicHardwareContextObject::printState() const
 {
-    impl_.registry.printState();
+    internal_.registry.printState();
 }
 
 } // namespace dynamichardware

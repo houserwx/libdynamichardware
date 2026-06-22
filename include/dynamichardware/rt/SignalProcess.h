@@ -13,7 +13,17 @@
 //   Returns the cached value written by the most recent tickNow() — zero
 //   cost (single load instruction).  Never calls clock_gettime.
 //
-// Both are single-RT-thread only.  gSignalProcessNowNs is not atomic.
+// SINGLE-THREAD INVARIANT:
+//   gSignalProcessNowNs is intentionally NON-ATOMIC for ~10ns access time.
+//   signalProcessTickNow() MUST be called from exactly one thread per cycle.
+//   signalProcessNowNs() MAY be called from any code path that runs within
+//   the same logical cycle (e.g., DebounceMachine::filter, PulseMachine::arm)
+//   but those paths must NOT execute concurrently with signalProcessTickNow()
+//   itself or with reads from a different RT thread. Violating this invariant
+//   risks torn reads of the 64-bit timestamp (undefined behavior).
+//
+// Target platform: Linux/ARM exclusively. Uses <time.h> + CLOCK_MONOTONIC.
+// POSIX dependency is accepted as a target-platform constraint.
 // ---------------------------------------------------------------------------
 namespace dynamichardware::rt {
 

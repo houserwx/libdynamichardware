@@ -100,19 +100,20 @@ private:
     friend class HardwareOrchestrator;
     template<class T> friend struct std::default_delete;
 
-   struct Impl {
+    /// Inline composition grouping (not pImpl — members are visible in header).
+    struct InternalState {
         dhdo::HardwareRegistry registry;
         dhdo::HardwareCatalog  catalog;
         std::unordered_map<std::string, std::string> nameToUuid;     ///< displayName → uuid
     };
 
-    explicit DynamicHardwareContextObject(Impl&& impl);
+    explicit DynamicHardwareContextObject(InternalState&& internal_);
     ~DynamicHardwareContextObject();
 
     DynamicHardwareContextObject(const DynamicHardwareContextObject&) = delete;
     DynamicHardwareContextObject& operator=(const DynamicHardwareContextObject&) = delete;
 
-    Impl impl_;
+    InternalState internal_;
     State state_{State::ACTIVE};
 };
 

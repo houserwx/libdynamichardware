@@ -81,13 +81,14 @@ private:
     // Message types are handled exclusively by adapter hooks (not swept).
     /// Classify by bitmask — future-proof against new EntryType additions.
     /// Direction lives in bits [1-0] (DIR_INPUT=0x01, DIR_OUTPUT=0x02).
-    [[nodiscard]] static bool isInputEntryType(EntryType t) noexcept {
+    /// constexpr enables use in template constraints and static_assert contexts.
+    [[nodiscard]] static constexpr bool isInputEntryType(EntryType t) noexcept {
         uint8_t dir = static_cast<uint8_t>(t) & 0x03; // Extract direction bits
         return dir == DIR_INPUT &&
                ((static_cast<uint8_t>(t) & BASE_MSG) != BASE_MSG); // Exclude message types
     }
 
-    [[nodiscard]] static bool isOutputEntryType(EntryType t) noexcept {
+    [[nodiscard]] static constexpr bool isOutputEntryType(EntryType t) noexcept {
         uint8_t dir = static_cast<uint8_t>(t) & 0x03; // Extract direction bits
         return dir == DIR_OUTPUT &&
                ((static_cast<uint8_t>(t) & BASE_MSG) != BASE_MSG); // Exclude message types
