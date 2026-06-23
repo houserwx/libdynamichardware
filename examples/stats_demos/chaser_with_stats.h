@@ -67,7 +67,7 @@ void runChaserWithStats(
     unsigned win_count{0};
     double   win_sum{0};
     double   win_min_p{std::numeric_limits<double>::max()}, win_max_p{0.0};
-    int64_t  win_prev_sample_ns{0};
+    int64_t  win_prev_periodNs{0};      ///< Previous cycle's period for window jitter delta
     double   win_jitter_sum{0};
     unsigned win_jitter_count{0};
     double   win_jitter_min{std::numeric_limits<double>::max()}, win_jitter_max{0.0};
@@ -145,14 +145,15 @@ void runChaserWithStats(
             if (p_us < win_min_p) win_min_p = p_us;
             if (p_us > win_max_p) win_max_p = p_us;
 
-            if (win_prev_sample_ns != 0 && periodNs > 0) {
-                double jit_us = std::abs(static_cast<double>(arrivalNs - win_prev_sample_ns) / 1000.0);
+            // Window jitter: abs(delta between consecutive periods) in µs
+            if (win_prev_periodNs != 0) {
+                double jit_us = std::abs(static_cast<double>(periodNs - win_prev_periodNs)) / 1000.0;
                 win_jitter_sum += jit_us;
                 ++win_jitter_count;
                 if (jit_us < win_jitter_min) win_jitter_min = jit_us;
                 if (jit_us > win_jitter_max) win_jitter_max = jit_us;
             }
-            win_prev_sample_ns = arrivalNs;
+            win_prev_periodNs = periodNs;
 
             // --- Cumulative Welford's online algorithm (ns domain — purely additive) ---
             ++cum_count;
@@ -206,15 +207,15 @@ void runChaserWithStats(
             fflush(stdout);
 
             // Reset period window for next cycle — cumulative stays intact!
-            win_count        = 0;
-            win_sum          = 0.0;
-            win_min_p        = std::numeric_limits<double>::max();
-            win_max_p        = 0.0;
-            win_prev_sample_ns = 0;
-            win_jitter_sum   = 0.0;
-            win_jitter_count = 0;
-            win_jitter_min   = std::numeric_limits<double>::max();
-            win_jitter_max   = 0.0;
+            win_count         = 0;
+            win_sum           = 0.0;
+            win_min_p         = std::numeric_limits<double>::max();
+            win_max_p         = 0.0;
+            win_prev_periodNs = 0;
+            win_jitter_sum    = 0.0;
+            win_jitter_count  = 0;
+            win_jitter_min    = std::numeric_limits<double>::max();
+            win_jitter_max    = 0.0;
         }
     }
 } // runChaserWithStats
