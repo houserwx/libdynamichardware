@@ -93,15 +93,15 @@ void runChaserWithStats(
         // Sleep until absolute deadline (= prev_wakeup + cycle_length) — no drift from relative sleeps
         clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &nextWakeup, nullptr);
 
-        // Advance deadline for NEXT cycle BEFORE any work so we never steal compute budget
+        // Advance deadline BEFORE any work so we never steal compute budget
         nextWakeup = addNsToTs(nextWakeup, static_cast<int64_t>(target_period_ns));
         ++cycleCount;
 
-        // Measure arrival immediately after wakeup — captures how close we hit the target.
+        // Measure arrival immediately after wakeup — before ANY work starts.
         struct timespec now{};
         clock_gettime(CLOCK_MONOTONIC, &now);
 
-        // ── DO ALL WORK: setBool + light step I/O + conditional stats print ──
+        // ── DO ALL WORK: setBool + light step + conditional stats print ────
         for (size_t i = 0; i < outputs.size(); ++i)
             outputs[i]->setBool(i == current_light);
 
