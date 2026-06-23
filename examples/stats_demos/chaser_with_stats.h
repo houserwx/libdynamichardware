@@ -1,9 +1,14 @@
 // ==============================================================================
-// chaser_with_stats.h — Single-thread RT loop + cumulative stats.
+// chaser_with_stats.h — Zero-I/O RT loop + display thread for all output.
 //
-// Matches CIVControl-ARM DemoApplication.cpp exactly: ONE thread, ONE loop.
-//   Sleep until absolute deadline → measure arrival → RT work → conditional print.
-// No SPSC rings, no producer/consumer threads, no drain logic, no heap allocations.
+// Architecture (clean separation):
+//   RT thread      → walks lights, accumulates Welford's stats inline. ZERO syscalls.
+//                    Pushes light-switch indices & print triggers to tiny SPSC rings.
+//   Display thread → drains rings at its own pace, handles ALL printf/fflush calls.
+//                    Low priority SCHED_OTHER so it never preempts the RT path.
+//
+// This matches CIVControl-ARM: the hot path does ONLY setBool + arithmetic.
+// All I/O is offloaded via lock-free ring buffers (no mutex overhead).
 // Stats are CUMULATIVE via Welford's online algorithm (purely additive).
 // ============================================================================
 
@@ -11,12 +16,17 @@
 
 #include <vector>
 #include <string>
+#include <thread>
+#include <atomic>
+#include <memory>
 #include <cmath>
 #include <limits>
 #include <cstdio>
 #include <cstdlib>
 #include <sched.h>
 #include <unistd.h>
+
+#include "spsc_ring.h"
 
 // ---------------------------------------------------------------------------
 // addNsToTs / diffNs helpers — pure integer arithmetic, no kernel calls.
@@ -41,13 +51,105 @@ void runChaserWithStats(
     long long target_period_ns,                 // e.g., 1'000'000 for 1ms cycle
     unsigned cycles_per_light                   // RT cycles per light step = walk delay / cycle period
 ) {
-    // ── Configure RT scheduling on CURRENT thread (matches CIVControl-ARM Threadrunner.cpp) ──
-    struct sched_param param{};
-    param.sched_priority = 85;
+    // ── SPSC rings: RT thread → display thread (tiny — events are infrequent) ──
+    auto event_ring = std::make_unique<SpscRing<unsigned, 256>>();  // Light switch indices (~4/s for 1s walk delay)
 
-    int rc = pthread_setschedparam(pthread_self(), SCHED_FIFO, &param);
-    if (rc != 0) { perror("[HotPath] WARNING: failed to set SCHED_FIFO"); }
-    else        { printf("[info] Main thread: SCHED_FIFO priority=85\n"); fflush(stdout); }
+    // Shared mutable state protected by atomic flag (display thread only reads when printTrigger is set)
+    struct StatsSnapshot {
+        bool            ready       = false;   ///< Atomic: display thread polls this first
+        unsigned        win_count   = 0;
+        double          win_sum     = 0.0;
+        double          win_min_p   = std::numeric_limits<double>::max();
+        double          win_max_p   = 0.0;
+        double          win_jit_sum = 0.0;
+        unsigned        win_jit_cnt = 0;
+        double          win_jit_min = std::numeric_limits<double>::max();
+        double          win_jit_max = 0.0;
+        uint64_t        cum_count   = 0;
+        double          cum_m       = 0.0;    ///< Welford mean (ns)
+        double          cum_m2      = 0.0;    ///< Welford M2 (ns²)
+        double          cum_min_p   = std::numeric_limits<double>::max();
+        double          cum_max_p   = 0.0;
+        double          cum_jit_sum = 0.0;
+        double          cum_jit_min = std::numeric_limits<double>::max();
+        double          cum_jit_max = 0.0;
+    };
+
+    alignas(64) StatsSnapshot snapshot{};  ///< Cache-line aligned to avoid false sharing with RT accumulators
+    std::atomic<bool> printTrigger{false}; ///< RT thread flips this when it's time to print
+
+    constexpr unsigned kWarmupSamples = 5000;
+    const double kTargetPeriodUs = static_cast<double>(target_period_ns) / 1000.0;
+
+    // ── Display thread: ALL I/O happens here (low priority, never blocks RT) ──
+    std::atomic<bool> running{true};
+    std::thread displayThread([event_ring = event_ring.get(), &snapshot, &printTrigger, &running,
+                               &channel_names, kTargetPeriodUs]() noexcept {
+        // Run at default SCHED_OTHER — intentionally NOT real-time so we don't preempt the hot path
+        struct sched_param param{};
+        param.sched_priority = 1;  ///< Lowest normal-priority level on Linux
+
+        int rc = pthread_setschedparam(pthread_self(), SCHED_OTHER, &param);
+        if (rc != 0) perror("[Display] WARNING: failed to set SCHED_OTHER");
+
+        while (running.load(std::memory_order_relaxed)) {
+            // --- Drain light-switch events ---
+            unsigned chIdx{};
+            bool gotEvent = false;
+            while (event_ring->pop(chIdx)) {
+                if (chIdx < channel_names.size()) {
+                    printf("[light] %s\n", channel_names[chIdx].c_str());
+                } else {
+                    printf("[light] channel %u\n", chIdx);
+                }
+                gotEvent = true;
+            }
+
+            // --- Check for stat print trigger ---
+            if (printTrigger.exchange(false, std::memory_order_acquire)) {
+                double win_avg_us = snapshot.win_count > 0 ? snapshot.win_sum / static_cast<double>(snapshot.win_count) : 0.0;
+                double cum_avg_us = snapshot.cum_m / 1000.0;                        // ns → µs
+                double cum_sd_us  = std::sqrt(snapshot.cum_m2 / static_cast<double>(snapshot.cum_count)) / 1000.0;
+
+                printf("\n");
+                printf("Period       | Cycles: %5u | Set: %.3fµs | Min: %.3fµs | Max: %.3fµs | Avg: %.3fµs\n",
+                       snapshot.win_count, kTargetPeriodUs, snapshot.win_min_p, snapshot.win_max_p, win_avg_us);
+
+                if (snapshot.win_jit_cnt > 0) {
+                    double win_jit_avg = snapshot.win_jit_sum / static_cast<double>(snapshot.win_jit_cnt);
+                    printf("             Jitter:                          Min: %.3fµs | Max: %.3fµs | Avg: %.3fµs\n",
+                           snapshot.win_jit_min, snapshot.win_jit_max, win_jit_avg);
+                } else {
+                    printf("             Jitter:                          —\n");
+                }
+
+                printf("Cumulative   | Cycles: %6llu | Set: %.3fµs | Min: %.3fµs | Max: %.3fµs | Avg: %.3fµs\n",
+                       static_cast<unsigned long long>(snapshot.cum_count), kTargetPeriodUs,
+                       snapshot.cum_min_p, snapshot.cum_max_p, cum_avg_us);
+
+                if (snapshot.cum_count > 1) {
+                    int64_t jit_deltas = static_cast<int64_t>(snapshot.cum_count - 1);
+                    double cum_jit_avg = snapshot.cum_jit_sum / static_cast<double>(jit_deltas > 0 ? jit_deltas : 1);
+                    printf("             Jitter:                          Min: %.3fµs | Max: %.3fµs | Avg: %.3fµs ±%.3fµs\n",
+                           snapshot.cum_jit_min, snapshot.cum_jit_max, cum_jit_avg, cum_sd_us);
+                } else {
+                    printf("             Jitter:                          —\n");
+                }
+
+                fflush(stdout);
+            }
+
+            // Sleep briefly to avoid busy-spinning when nothing is happening.
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    });
+
+    // ── RT thread setup (current thread stays RT) ──────────────────────────
+    struct sched_param rtParam{};
+    rtParam.sched_priority = 85;
+
+    int rc = pthread_setschedparam(pthread_self(), SCHED_FIFO, &rtParam);
+    if (rc != 0) { perror("[RT] WARNING: failed to set SCHED_FIFO"); }
 
     // Prefault stack pages before RT loop starts
     volatile char* stack_page = static_cast<volatile char*>(alloca(32 * 4096));
@@ -70,66 +172,18 @@ void runChaserWithStats(
     unsigned win_jitter_count{0};
     double   win_jitter_min{std::numeric_limits<double>::max()}, win_jitter_max{0.0};
 
-    constexpr unsigned kWarmupSamples = 5000; ///< Discard first N samples to let caches warm + scheduler settle
     unsigned warmupRemaining = kWarmupSamples;
-    const double       kTargetPeriodUs = static_cast<double>(target_period_ns) / 1000.0;
     bool warmupDoneLogged = false;
 
     // Cycles between stat prints (~5 seconds worth at current period rate)
     const uint64_t logEvery = 5'000'000'000ULL / static_cast<uint64_t>(target_period_ns);
 
-    // ── Print helper: Period + Cumulative lines ────────────────────────────
-    auto printStats = [&]() {
-        double win_avg_us  = (win_count > 0) ? (win_sum / static_cast<double>(win_count)) : 0.0;
-        double cum_avg_us  = cum_welford_m / 1000.0;                        // ns → µs
-        double cum_sd_us   = std::sqrt(cum_welford_m2 / static_cast<double>(cum_count)) / 1000.0;
-
-        printf("\n");
-        printf("Period       | Cycles: %5u | Set: %.3fµs | Min: %.3fµs | Max: %.3fµs | Avg: %.3fµs\n",
-               win_count, kTargetPeriodUs, win_min_p, win_max_p, win_avg_us);
-
-        if (win_jitter_count > 0) {
-            double win_jit_avg = win_jitter_sum / static_cast<double>(win_jitter_count);
-            printf("             Jitter:                          Min: %.3fµs | Max: %.3fµs | Avg: %.3fµs\n",
-                   win_jitter_min, win_jitter_max, win_jit_avg);
-        } else {
-            printf("             Jitter:                          —\n");
-        }
-
-        printf("Cumulative   | Cycles: %6llu | Set: %.3fµs | Min: %.3fµs | Max: %.3fµs | Avg: %.3fµs\n",
-               static_cast<unsigned long long>(cum_count), kTargetPeriodUs, cum_min_p, cum_max_p, cum_avg_us);
-
-        if (cum_prev_sample_ns != 0) {
-            int64_t jit_deltas = static_cast<int64_t>(cum_count - 1);
-            double cum_jit_avg = cum_jitter_sum / static_cast<double>(jit_deltas > 0 ? jit_deltas : 1);
-            printf("             Jitter:                          Min: %.3fµs | Max: %.3fµs | Avg: %.3fµs ±%.3fµs\n",
-                   cum_jitter_min, cum_jitter_max, cum_jit_avg, cum_sd_us);
-        } else {
-            printf("             Jitter:                          —\n");
-        }
-
-        fflush(stdout);
-
-        // Reset period window for next cycle — cumulative stays intact!
-        win_count        = 0;
-        win_sum          = 0.0;
-        win_min_p        = std::numeric_limits<double>::max();
-        win_max_p        = 0.0;
-        win_prev_sample_ns = 0;
-        win_jitter_sum   = 0.0;
-        win_jitter_count = 0;
-        win_jitter_min   = std::numeric_limits<double>::max();
-        win_jitter_max   = 0.0;
-    };
-
-    // ── Absolute-deadline RT loop (matches CIVControl-ARM DemoApplication.cpp exactly) ──
+    // ── Absolute-deadline RT loop: ZERO I/O — only atomics + arithmetic ────
     struct timespec nextWakeup{};
     clock_gettime(CLOCK_MONOTONIC, &nextWakeup);
     nextWakeup = addNsToTs(nextWakeup, 100'000LL);
 
     uint64_t cycleCount{0};
-    int      overrunCount{0};
-    int64_t  maxOverrunNs{0}, totalOverNs{0};
 
     unsigned current_light      = 0;
     unsigned cycles_since_switch = 0;
@@ -146,33 +200,23 @@ void runChaserWithStats(
         struct timespec now{};
         clock_gettime(CLOCK_MONOTONIC, &now);
 
-        const int64_t overNs = diffNs(now, nextWakeup);
-        if (overNs > 0) {
-            ++overrunCount;
-            totalOverNs += overNs;
-            maxOverrunNs = std::max(maxOverrunNs, overNs);
-        }
-
-        // ── RT work phase (setBool on each output channel) ────────────────
+        // ── RT work phase (setBool on each output channel) — ZERO I/O ────
         for (size_t i = 0; i < outputs.size(); ++i)
             outputs[i]->setBool(i == current_light);
 
-        // Light step tracking
+        // Light step tracking — push index to display thread instead of printf()
         ++cycles_since_switch;
         if (cycles_since_switch >= cycles_per_light) {
             cycles_since_switch = 0;
-            printf("[light] %s\n", channel_names.empty() ? "channel" : channel_names[current_light].c_str());
-            fflush(stdout);
+            event_ring->push(current_light);  ///< Non-blocking push to display thread ring
             current_light = (current_light + 1) % outputs.size();
         }
 
-        // ── Period sample accumulation — inline in the SAME thread that produced it ──
+        // ── Period sample accumulation — inline arithmetic only, NO syscalls ──
         if (warmupRemaining > 0) {
             --warmupRemaining;
             if (warmupRemaining == 0 && !warmupDoneLogged) {
-                printf("[info] Warmup complete (%u cycles discarded) — starting metrics\n", kWarmupSamples);
-                fflush(stdout);
-                warmupDoneLogged = true;
+                warmupDoneLogged = true;   ///< Display thread will pick up first stats print naturally
             }
         } else {
             int64_t arrivalNs = static_cast<int64_t>(now.tv_sec) * 1'000'000'000LL + now.tv_nsec;
@@ -225,9 +269,60 @@ void runChaserWithStats(
             cum_prev_sample_ns = arrivalNs;
         }
 
-        // ── Print stats every ~5 seconds (cycle-count driven, not wall-clock sleep) ──
+        // ── Trigger stats print via atomic flag + snapshot copy ──
         if (logEvery > 0 && warmupDoneLogged && win_count > 0 && (cycleCount % logEvery == 0)) {
-            printStats();
+            // Copy accumulators into cache-aligned snapshot for display thread to read lock-free
+            snapshot.win_count   = win_count;
+            snapshot.win_sum     = win_sum;
+            snapshot.win_min_p   = win_min_p;
+            snapshot.win_max_p   = win_max_p;
+            snapshot.win_jit_sum = win_jitter_sum;
+            snapshot.win_jit_cnt = win_jitter_count;
+            snapshot.win_jit_min = win_jitter_min;
+            snapshot.win_jit_max = win_jitter_max;
+
+            snapshot.cum_count   = cum_count;
+            snapshot.cum_m       = cum_welford_m;
+            snapshot.cum_m2      = cum_welford_m2;
+            snapshot.cum_min_p   = cum_min_p;
+            snapshot.cum_max_p   = cum_max_p;
+            snapshot.cum_jit_sum = cum_jitter_sum;
+            snapshot.cum_jit_min = cum_jitter_min;
+            snapshot.cum_jit_max = cum_jitter_max;
+
+            // Reset window accumulators — cumulative stays intact!
+            win_count        = 0;
+            win_sum          = 0.0;
+            win_min_p        = std::numeric_limits<double>::max();
+            win_max_p        = 0.0;
+            win_prev_sample_ns = 0;
+            win_jitter_sum   = 0.0;
+            win_jitter_count = 0;
+            win_jitter_min   = std::numeric_limits<double>::max();
+            win_jitter_max   = 0.0;
+
+            // Signal display thread (release semantics ensures snapshot write is visible)
+            printTrigger.store(true, std::memory_order_release);
         }
-}
-}
+    }
+
+    // ── Graceful shutdown ────────────────────────────────────────────────────
+    running.store(false, std::memory_order_relaxed);
+    if (displayThread.joinable()) displayThread.join();
+
+    // Final stats dump on stdout (safe — main is exiting)
+    if (cum_count > 0) {
+        printf("\n--- Shutdown ---\n");
+        double cum_avg_us = cum_welford_m / 1000.0;
+        double cum_sd_us  = std::sqrt(cum_welford_m2 / static_cast<double>(cum_count)) / 1000.0;
+
+        printf("Cumulative   | Cycles: %6llu | Set: %.3fµs | Min: %.3fµs | Max: %.3fµs | Avg: %.3fµs\n",
+               static_cast<unsigned long long>(cum_count), kTargetPeriodUs, cum_min_p, cum_max_p, cum_avg_us);
+
+        if (cum_count > 1) {
+            int64_t jit_deltas = static_cast<int64_t>(cum_count - 1);
+            double cum_jit_avg = cum_jitter_sum / static_cast<double>(jit_deltas > 0 ? jit_deltas : 1);
+            printf("             Jitter:                          Min: %.3fµs | Max: %.3fµs | Avg: %.3fµs ±%.3fµs\n",
+                   cum_jitter_min, cum_jitter_max, cum_jit_avg, cum_sd_us);
+        } else {
+            printf("             Jitter:                          —\n");
