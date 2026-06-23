@@ -123,7 +123,6 @@ void runChaserWithStats(
 
         int64_t prevArrivalNs{0};  // Arrival timestamp of previous cycle (for wall-period measurement)
 
-        unsigned droppedPushes{0};
         while (running.load(std::memory_order_relaxed)) {
             // Sleep until absolute deadline — no drift accumulation from relative sleeps
             clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &nextWakeup, nullptr);
@@ -141,10 +140,8 @@ void runChaserWithStats(
                 outputs[i]->setBool(i == current_light);
 
             // Compute wall period between consecutive arrivals and push to ring.
-            if (prevArrivalNs != 0) {
-                bool ok = timing_ring->push(arrivalNs - prevArrivalNs);
-                if (!ok) droppedPushes++;
-            }
+            if (prevArrivalNs != 0)
+                timing_ring->push(arrivalNs - prevArrivalNs);
             prevArrivalNs = arrivalNs;
 
             ++cycles_since_switch;
@@ -186,14 +183,11 @@ void runChaserWithStats(
         }
     };
 
-    // ── Main thread: drain rings + print every second ──────────────────────
-    auto drainHeartbeat = std::chrono::steady_clock::now();
-    unsigned totalPopped{0};
+    // ── Main thread: drain rings + print every 5 seconds ───────────────────
     try {
         while (true) {
             int64_t sample{};
             while (timing_ring->pop(sample)) {
-                ++totalPopped;
                 double p_us = static_cast<double>(sample) / 1000.0;   // ns → µs
 
                 // --- Warmup filter: discard first N samples on MAIN thread only ---
@@ -251,14 +245,6 @@ void runChaserWithStats(
             }
 
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
-
-            // Heartbeat: detect main-thread stall every 3 seconds
-            auto hbNow = std::chrono::steady_clock::now();
-            if ((hbNow - drainHeartbeat) >= std::chrono::seconds(3)) {
-                fprintf(stderr, "[drain] popped=%u in ~3s\n", totalPopped);
-                totalPopped = 0;
-                drainHeartbeat = hbNow;
-            }
 
             auto now = std::chrono::steady_clock::now();
             if ((now - last_stats_print) >= std::chrono::seconds(5) && win_count > 0) {
