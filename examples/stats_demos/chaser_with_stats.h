@@ -326,3 +326,6 @@ void runChaserWithStats(
                    cum_jitter_min, cum_jitter_max, cum_jit_avg, cum_sd_us);
         } else {
             printf("             Jitter:                          —\n");
+        }
+    }
+} // runChaserWithStats
