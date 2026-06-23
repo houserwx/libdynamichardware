@@ -90,22 +90,21 @@ void runChaserWithStats(
     unsigned cycles_since_switch = 0;
 
         while (true) {
-        // Sleep until absolute deadline — no drift accumulation from relative sleeps
+        // Sleep until absolute deadline (= prev_wakeup + cycle_length) — no drift from relative sleeps
         clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &nextWakeup, nullptr);
 
-        // Advance deadline for NEXT cycle BEFORE RT work so compute budget doesn't steal time
+        // Advance deadline for NEXT cycle BEFORE any work so we never steal compute budget
         nextWakeup = addNsToTs(nextWakeup, static_cast<int64_t>(target_period_ns));
         ++cycleCount;
 
-        // Single measurement point: capture arrival immediately after wakeup (matches DemoApplication.cpp)
+        // Measure arrival immediately after wakeup — captures how close we hit the target.
         struct timespec now{};
         clock_gettime(CLOCK_MONOTONIC, &now);
 
-        // ── RT work phase (setBool on each output channel) ────────────────
+        // ── DO ALL WORK: setBool + light step I/O + conditional stats print ──
         for (size_t i = 0; i < outputs.size(); ++i)
             outputs[i]->setBool(i == current_light);
 
-        // Light step tracking
         ++cycles_since_switch;
         if (cycles_since_switch >= cycles_per_light) {
             cycles_since_switch = 0;
@@ -114,7 +113,7 @@ void runChaserWithStats(
             current_light = (current_light + 1) % outputs.size();
         }
 
-        // ── Period sample accumulation — inline arithmetic only ────────────
+        // ── Period sample accumulation ──────────────────────────────────────
         if (warmupRemaining > 0) {
             --warmupRemaining;
             if (warmupRemaining == 0 && !warmupDoneLogged) {
