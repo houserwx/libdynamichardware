@@ -225,24 +225,29 @@ void SimulatedRTBackend::setCyclePeriod(uint64_t nanoseconds) noexcept
     uint32_t newCycle = static_cast<uint32_t>(nanoseconds);
     std::atomic_store(&cycleNs_, newCycle);
     cycleNsD_ = static_cast<double>(newCycle);
+
     double cyclesPerSec = 1e9 / cycleNsD_;
 
-    // Recompute simulation state for all channels with the new rate.
+    // Recompute all simulation states for the new rate using stored originals.
     for (auto& sim : simStates_) {
         if (sim.type == dhdo::EntryType::BoolInput || sim.type == dhdo::EntryType::BoolOutput) {
-            // Toggle periods are stored in milliseconds internally via channel defs,
-            // but we only have togglePeriodCycles here. Without re-parsing, we keep
-            // existing cycle counts — they'll naturally adjust as tickCount advances.
-            // For a full recompute we'd need to store original ms values, which is deferred.
+            if (sim.origTogglePeriodMs > 0) {
+                sim.togglePeriodCycles = static_cast<uint32_t>(
+                    sim.origTogglePeriodMs / 1000.0 * cyclesPerSec);
+                sim.highCycles = static_cast<uint32_t>(
+                    sim.togglePeriodCycles * sim.origDutyCyclePercent / 100.0f);
+                sim.lowCycles = sim.togglePeriodCycles - sim.highCycles;
+            }
         } else if ((sim.type & dhdo::BASE_FLOAT)) {
-            // Phase increment depends on cycles/sec; recompute from stored amplitude/offset.
-            // We don't store original frequencyHz so phaseIncrement stays as-is.
-            // A proper fix would cache frequencyHz per SimState.
+            if (sim.origFrequencyHz > 0.0) {
+                sim.phaseIncrement = 2.0 * M_PI * sim.origFrequencyHz / cyclesPerSec;
+            }
         }
     }
-    std::printf("[Simulated] Cycle period updated to %llu ns (%.1f kHz)\n",
+    std::printf("[Simulated] Cycle period updated to %llu ns (%.1f kHz) — recomputed %zu channel phases\n",
                 (unsigned long long)nanoseconds,
-                1'000'000'000.0 / static_cast<double>(nanoseconds));
+                1'000'000'000.0 / static_cast<double>(nanoseconds),
+                simStates_.size());
 }
 
 uint64_t SimulatedRTBackend::getCyclePeriod() const noexcept
@@ -318,22 +323,25 @@ bool SimulatedRTBackend::buildRT()
                 periodCycles = static_cast<uint32_t>(
                     c.togglePeriodMs / 1000.0 * cyclesPerSec);
             }
-            sim.togglePeriodCycles = periodCycles;
-            sim.highCycles = static_cast<uint32_t>(periodCycles * c.dutyCyclePercent / 100.0f);
-            sim.lowCycles  = periodCycles - sim.highCycles;
-            sim.isHigh     = false;
-            sim.tickCount  = 0;
+            sim.origTogglePeriodMs    = c.togglePeriodMs;
+            sim.origDutyCyclePercent  = c.dutyCyclePercent;
+            sim.togglePeriodCycles    = periodCycles;
+            sim.highCycles            = static_cast<uint32_t>(periodCycles * c.dutyCyclePercent / 100.0f);
+            sim.lowCycles             = periodCycles - sim.highCycles;
+            sim.isHigh                = false;
+            sim.tickCount             = 0;
         } else if (dhdo::entryIsSigned(type) && !isOutput) {
             sim.intValue           = 0;
             sim.incrementPerCycle  = c.incrementPerCycle;
             sim.minValue           = c.minValue;
             sim.maxValue           = c.maxValue;
         } else if ((type & dhdo::BASE_FLOAT) && !isOutput) {
-            sim.floatPhase       = 0.0;
-            double hz = c.frequencyHz > 0 ? c.frequencyHz : 1.0;
-            sim.phaseIncrement   = 2.0 * M_PI * hz / cyclesPerSec;
-            sim.floatAmplitude   = c.amplitude;
-            sim.floatOffset      = c.offset;
+            sim.floatPhase         = 0.0;
+            double hz              = c.frequencyHz > 0 ? c.frequencyHz : 1.0;
+            sim.origFrequencyHz    = hz;
+            sim.phaseIncrement     = 2.0 * M_PI * hz / cyclesPerSec;
+            sim.floatAmplitude     = c.amplitude;
+            sim.floatOffset        = c.offset;
         }
 
         currentOffset += entryByteSize(type);

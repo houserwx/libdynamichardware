@@ -64,6 +64,10 @@ int main() {
 
     if (!ctx->freeze()) { fprintf(stderr, "[Demo] Context freeze failed\n"); return 1; }
 
+    // Tell backends our target cycle rate (GPIO ignores this — purely reactive)
+    constexpr long long kTargetPeriodNs = 1'000'000LL;
+    ctx->setTargetCyclePeriodNanoseconds(static_cast<uint64_t>(kTargetPeriodNs));
+
     printf("\n[Demo] Health check — backends: %zu, entries: %zu, healthy: %s\n\n",
            ctx->backendCount(), ctx->entryCount(),
            ctx->allBackendsHealthy() ? "yes" : "no");
@@ -85,8 +89,6 @@ int main() {
 
     printf("[Demo] Resolved %u GPIO output channel(s)\n", static_cast<unsigned>(gpio_outs.size()));
     printf("[Demo] [light] on each switch | [stats] every second (cumulative). Ctrl+C to stop.\n\n");
-
-    constexpr long long kTargetPeriodNs = 1'000'000LL;   // 1 ms target cycle time
 
     try {
         runChaserWithStats(gpio_outs, channel_names,

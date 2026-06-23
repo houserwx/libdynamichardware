@@ -73,6 +73,12 @@ public:
     /// Post-write hook: backend flushes process image to physical hardware.
     void onAfterWriteOutputs() noexcept override;
 
+    // --- Cycle period control (GPIO is purely reactive — no-op) ----------
+    /// GPIO has no internal timing; inherits default no-op from IRuntimeAdapter.
+    /// Declared explicitly for documentation clarity.
+    void setCyclePeriod(uint64_t /*nanoseconds*/) noexcept override {}
+    [[nodiscard]] uint64_t getCyclePeriod() const noexcept override { return 0; }
+
     // --- Builder interface -------------------------------------------------
     /// Set catalog reference so backend can resolve UUIDs internally.
     /// Called by orchestrator/factory BEFORE build(channels).

@@ -45,6 +45,10 @@ int main() {
     // ── Step 3: Freeze — locks entries for RT operation ──────────────────────
     if (!ctx->freeze()) { std::fprintf(stderr, "[Demo] Context freeze failed\n"); return 1; }
 
+    // Tell EtherCAT backend our target cycle rate (takes effect for application time stamping)
+    constexpr long long kTargetPeriodNs = 1'000'000LL;
+    ctx->setTargetCyclePeriodNanoseconds(static_cast<uint64_t>(kTargetPeriodNs));
+
     std::printf("[Demo] Health check — backends: %zu, entries: %zu, healthy: %s\n\n",
                 ctx->backendCount(), ctx->entryCount(),
                 ctx->allBackendsHealthy() ? "yes" : "no");
@@ -74,7 +78,6 @@ int main() {
     std::printf("\n[Demo] [light] on each switch | [stats] every second (cumulative). Ctrl+C to stop.\n\n");
 
     // ── Step 5: Launch worker thread + main drains SPSC rings in a loop ──────
-    constexpr long long kTargetPeriodNs = 1'000'000LL;   // 1 ms target cycle time
     
     try {
         runChaserWithStats(outputs, channel_names,

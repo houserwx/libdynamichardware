@@ -57,11 +57,13 @@ public:
         uint32_t  byteOffset{0};
 
         // Bool: periodic square-wave toggle state machine
-        uint32_t  togglePeriodCycles{0};     ///< Full period in RT cycles
+        uint32_t  togglePeriodCycles{0};     ///< Full period in RT cycles (recomputed on setCyclePeriod)
         uint32_t  highCycles{0};             ///< HIGH duration in cycles
         uint32_t  lowCycles{0};              ///< LOW duration in cycles
         uint32_t  tickCount{0};              ///< Current position within period
         bool      isHigh{false};
+        uint32_t  origTogglePeriodMs{0};     ///< Original ms from JSON — source of truth for recompute
+        float     origDutyCyclePercent{50.0f}; ///< Original duty % from JSON
 
         // Integer: linear increment with optional bounded sawtooth
         int64_t   intValue{0};               ///< Current accumulated value
@@ -70,10 +72,11 @@ public:
         int64_t   maxValue{INT64_MAX};       ///< Upper bound (wraps if exceeded above)
 
         // Float: sinusoidal oscillation
-        double    floatPhase{0.0};           ///< Current phase angle (radians)
-        double    phaseIncrement{0.0};       ///< Phase delta per RT cycle
+        double    floatPhase{0.0};           ///< Current phase angle (radians) — preserved across rate change
+        double    phaseIncrement{0.0};       ///< Phase delta per RT cycle (recomputed on setCyclePeriod)
         float     floatAmplitude{1.0f};      ///< Peak deviation from offset
         float     floatOffset{0.0f};         ///< DC offset added to sine output
+        double    origFrequencyHz{0.0};      ///< Original Hz from JSON — source of truth for recompute
     };
 
     struct SimChannelDef {
