@@ -61,8 +61,8 @@ void runChaserWithStats(
     // Timing ring holds one sample per cycle → must survive a full stats window without dropping.
     // Capacity = 16384 (power-of-two ≥ 10k) gives ~16s headroom at 1kHz push rate.
     // Event ring is sparse — one notification per light step (~every 1 second).
-    SpscRing<int64_t, 16384> timing_ring;   // ≥10k cycles capacity at power-of-two boundary
-    SpscRing<unsigned, 256>  event_ring;     // Sparse — one notification per light step (~1/s)
+    SpscRing<int64_t, 131072> timing_ring;   // 2^17 — ~131k slots, ~131s headroom at 1kHz (was 16k)
+    SpscRing<unsigned, 512>   event_ring;    // 2^9 — light switch notifications (was 256)
 
    // ── Cumulative Welford's accumulators (written only by main thread) ────
     unsigned cum_count       = 0;
@@ -124,12 +124,12 @@ void runChaserWithStats(
 
         int64_t prevArrivalNs{0};  // Arrival timestamp of previous cycle (for wall-period measurement)
 
+        unsigned droppedPushes{0};
         while (running.load(std::memory_order_relaxed)) {
             // Sleep until absolute deadline — no drift accumulation from relative sleeps
             clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &nextWakeup, nullptr);
 
             // Single measurement point: capture arrival time immediately after wakeup.
-            // This is the "signalProcessTickNow" equivalent — cached once/cycle.
             struct timespec now{};
             clock_gettime(CLOCK_MONOTONIC, &now);
             int64_t arrivalNs = static_cast<int64_t>(now.tv_sec) * 1'000'000'000LL + now.tv_nsec;
@@ -142,9 +142,9 @@ void runChaserWithStats(
                 outputs[i]->setBool(i == current_light);
 
             // Compute wall period between consecutive arrivals and push to ring.
-            // Producer pushes EVERY sample — main thread handles warmup discard.
             if (prevArrivalNs != 0) {
-                timing_ring.push(arrivalNs - prevArrivalNs);   // Wall-to-wall period in ns
+                bool ok = timing_ring.push(arrivalNs - prevArrivalNs);
+                if (!ok) droppedPushes++;
             }
             prevArrivalNs = arrivalNs;
 
@@ -188,6 +188,8 @@ void runChaserWithStats(
     };
 
     // ── Main thread: drain rings + print every second ──────────────────────
+    auto drainHeartbeat = std::chrono::steady_clock::now();
+    unsigned totalPopped{0};
     try {
         while (true) {
             int64_t sample{};
@@ -249,6 +251,14 @@ void runChaserWithStats(
             }
 
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+            // Heartbeat: detect main-thread stall every 3 seconds
+            auto hbNow = std::chrono::steady_clock::now();
+            if ((hbNow - drainHeartbeat) >= std::chrono::seconds(3)) {
+                fprintf(stderr, "[drain] popped=%u in ~3s\n", totalPopped);
+                totalPopped = 0;
+                drainHeartbeat = hbNow;
+            }
 
             auto now = std::chrono::steady_clock::now();
             if ((now - last_stats_print) >= std::chrono::seconds(5) && win_count > 0) {
