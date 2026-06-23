@@ -203,6 +203,10 @@ void runChaserWithStats(
                     }
                     continue;   // Skip stats accumulation for this sample
                 }
+
+                // --- Period window accumulators ---
+                ++win_count;
+                win_sum += p_us;
                 if (p_us < win_min_p) win_min_p = p_us;
                 if (p_us > win_max_p) win_max_p = p_us;
 
