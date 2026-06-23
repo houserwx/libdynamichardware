@@ -25,6 +25,7 @@
 #include <sched.h>
 #include <unistd.h>
 #include <sys/syscall.h>
+#include <memory>
 
 #include "spsc_ring.h"
 
@@ -58,11 +59,9 @@ void runChaserWithStats(
     unsigned cycles_per_light                   // RT cycles per light step = walk delay / cycle period
 ) {
     // ── SPSC rings: hot path → main thread ────────────────────────────────
-    // Timing ring holds one sample per cycle → must survive a full stats window without dropping.
-    // Capacity = 16384 (power-of-two ≥ 10k) gives ~16s headroom at 1kHz push rate.
-    // Event ring is sparse — one notification per light step (~every 1 second).
-    SpscRing<int64_t, 131072> timing_ring;   // 2^17 — ~131k slots, ~131s headroom at 1kHz (was 16k)
-    SpscRing<unsigned, 512>   event_ring;    // 2^9 — light switch notifications (was 256)
+    // Heap-allocated to avoid blowing the default 8MB stack.
+    auto timing_ring = std::make_unique<SpscRing<int64_t, 32768>>();  // 32k slots — ~32s headroom at 1kHz
+    auto event_ring  = std::make_unique<SpscRing<unsigned, 512>>();   // light switch notifications
 
    // ── Cumulative Welford's accumulators (written only by main thread) ────
     unsigned cum_count       = 0;
@@ -143,7 +142,7 @@ void runChaserWithStats(
 
             // Compute wall period between consecutive arrivals and push to ring.
             if (prevArrivalNs != 0) {
-                bool ok = timing_ring.push(arrivalNs - prevArrivalNs);
+                bool ok = timing_ring->push(arrivalNs - prevArrivalNs);
                 if (!ok) droppedPushes++;
             }
             prevArrivalNs = arrivalNs;
@@ -151,7 +150,7 @@ void runChaserWithStats(
             ++cycles_since_switch;
             if (cycles_since_switch >= cycles_per_light) {
                 cycles_since_switch = 0;
-                event_ring.push(current_light);// Notify main thread of channel switch.
+                event_ring->push(current_light);    // Notify main thread of channel switch.
                 current_light = (current_light + 1) % outputs.size();
             }
         }
@@ -193,7 +192,8 @@ void runChaserWithStats(
     try {
         while (true) {
             int64_t sample{};
-            while (timing_ring.pop(sample)) {
+            while (timing_ring->pop(sample)) {
+                ++totalPopped;
                 double p_us = static_cast<double>(sample) / 1000.0;   // ns → µs
 
                 // --- Warmup filter: discard first N samples on MAIN thread only ---
@@ -242,7 +242,7 @@ void runChaserWithStats(
             }
 
             unsigned chIdx{};
-            while (event_ring.pop(chIdx)) {
+            while (event_ring->pop(chIdx)) {
                 if (chIdx < channel_names.size()) {
                     printf("[light] %s\n", channel_names[chIdx].c_str());
                 } else {
