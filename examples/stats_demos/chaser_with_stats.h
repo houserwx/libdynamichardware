@@ -135,7 +135,6 @@ void runChaserWithStats(
             // Skip first sample after warmup (no period to measure yet)
             if (periodNs <= 0) {
                 cum_prev_sample_ns = arrivalNs;
-                win_prev_sample_ns = arrivalNs;
                 continue;
             }
 
